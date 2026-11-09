@@ -578,7 +578,7 @@ export const TableCanvas3D: React.FC<TableCanvas3DProps> = ({
       targetHighlightMesh.visible = false;
     }
 
-    if (!disabled && cueBall && !cueBall.isPocketed && (turnPhase === 'AIMING' || turnPhase === 'PULLING_CUE')) {
+    if (cueBall && !cueBall.isPocketed && (turnPhase === 'AIMING' || turnPhase === 'PULLING_CUE')) {
       cueGroup.visible = true;
       const c3d = to3DCoord(cueBall.position.x, cueBall.position.y);
       const ballRadius3D = BALL_RADIUS * SCALE; // 0.12
@@ -610,7 +610,7 @@ export const TableCanvas3D: React.FC<TableCanvas3DProps> = ({
       if ((obj as THREE.Mesh).geometry) (obj as THREE.Mesh).geometry.dispose();
     }
 
-    if (!disabled && trajectory && cueBall && !cueBall.isPocketed && (turnPhase === 'AIMING' || turnPhase === 'PULLING_CUE') && trajectory.ghostBallPos) {
+    if (trajectory && cueBall && !cueBall.isPocketed && (turnPhase === 'AIMING' || turnPhase === 'PULLING_CUE') && trajectory.ghostBallPos) {
       const start3D = to3DCoord(cueBall.position.x, cueBall.position.y);
       const ghost3D = to3DCoord(trajectory.ghostBallPos.x, trajectory.ghostBallPos.y);
 

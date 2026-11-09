@@ -39,6 +39,8 @@ export type PacketType =
   | 'BALL_PLACEMENT'
   | 'TURN_RESULT'
   | 'FRAME_WIN'
+  | 'AIM_UPDATE'
+  | 'TIME_SYNC'
   | 'HEARTBEAT'
   | 'HEARTBEAT_ACK'
   | 'LEAVE_ROOM';
@@ -142,6 +144,20 @@ export interface HeartbeatAckPacket extends BasePacket {
   origTimestamp: number;
 }
 
+export interface AimUpdatePacket extends BasePacket {
+  type: 'AIM_UPDATE';
+  angle: number;
+  power: number;
+  spin: Vector2D;
+  playerIndex: number;
+}
+
+export interface TimeSyncPacket extends BasePacket {
+  type: 'TIME_SYNC';
+  shotClock: number;
+  activePlayerIndex: number;
+}
+
 export interface LeaveRoomPacket extends BasePacket {
   type: 'LEAVE_ROOM';
   reason?: string;
@@ -158,6 +174,8 @@ export type NetworkPacket =
   | BallPlacementPacket
   | TurnResultPacket
   | FrameWinPacket
+  | AimUpdatePacket
+  | TimeSyncPacket
   | HeartbeatPacket
   | HeartbeatAckPacket
   | LeaveRoomPacket;

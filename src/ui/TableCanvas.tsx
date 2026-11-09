@@ -211,7 +211,7 @@ export const TableCanvas: React.FC<TableCanvasProps> = ({
       }
 
       // 7. Draw Trajectory Aim Guide (Clean White Vector & Ghost Ring Matching Reference Image)
-      if (!disabled && trajectory && cueBall && !cueBall.isPocketed && (turnPhase === 'AIMING' || turnPhase === 'PULLING_CUE')) {
+      if (trajectory && cueBall && !cueBall.isPocketed && (turnPhase === 'AIMING' || turnPhase === 'PULLING_CUE')) {
         drawTrajectory(ctx, cueBall, trajectory, isRTL);
       }
 
@@ -263,8 +263,8 @@ export const TableCanvas: React.FC<TableCanvasProps> = ({
       // 8.5 Draw Particle Bursts & Celebrations
       updateAndDrawParticles(ctx, particlesRef.current);
 
-      // 9. Draw Cue Stick with Tribal Inlays
-      if (!disabled && cueBall && !cueBall.isPocketed && (turnPhase === 'AIMING' || turnPhase === 'PULLING_CUE')) {
+      // 9. Draw Cue Stick with Tribal Inlays (Visible for active shooter and spectator)
+      if (cueBall && !cueBall.isPocketed && (turnPhase === 'AIMING' || turnPhase === 'PULLING_CUE')) {
         drawTribalCueStick(ctx, cueBall.position, aimAngle, cuePower, cueItem);
       }
 

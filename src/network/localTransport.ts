@@ -28,6 +28,7 @@ export class LocalTransport {
   private static readonly TOPIC_PREFIX = 'cuemasters_v2/rooms/';
   private static readonly BEACON_TOPIC = 'cuemasters_v2/lobby/beacons';
 
+  private readonly instanceId: string = 'inst_' + Math.random().toString(36).slice(2, 9) + '_' + Date.now();
   private lobbyState: LocalLobbyState = 'IDLE';
   private currentRoomCode: string = '';
   private isHost: boolean = false;
@@ -37,6 +38,7 @@ export class LocalTransport {
 
   // Ultra-reliable cross-device real-time MQTT client
   private mqttClient: MqttClient | null = null;
+  private discoveryMqttClient: MqttClient | null = null;
   private roomTopic: string = '';
 
   // Local BroadcastChannel fallback (same device / multi-tab)
@@ -44,6 +46,7 @@ export class LocalTransport {
   private roomChannel: BroadcastChannel | null = null;
 
   private beaconIntervalId: number | null = null;
+  private discoveryScanIntervalId: number | null = null;
   private heartbeatIntervalId: number | null = null;
   private reconnectIntervalId: number | null = null;
   private joinRetryIntervalId: number | null = null;
@@ -99,14 +102,14 @@ export class LocalTransport {
     this.cleanup();
     this.isHost = true;
     this.currentRoomCode = config.roomCode.toUpperCase();
-    this.localPlayerId = config.hostPlayer.id;
+    this.localPlayerId = config.hostPlayer.id || 'p1_host';
     this.sequenceCounter = 0;
     this.seenSequences.clear();
 
     const cleanCode = this.sanitizeCode(this.currentRoomCode);
     this.roomTopic = `${LocalTransport.TOPIC_PREFIX}${cleanCode}`;
 
-    // Connect to global low-latency MQTT broker
+    // Connect to global low-latency MQTT broker for match room
     try {
       this.mqttClient = mqtt.connect(PRIMARY_BROKER, {
         keepalive: 30,
@@ -191,26 +194,26 @@ export class LocalTransport {
     return true;
   }
 
-  // 2. Discover Rooms
+  // 2. Discover Rooms (Lobby Scanner)
   public startDiscovery(): void {
     this.stopDiscovery();
     this.discoveredRoomsMap.clear();
     this.setState('SEARCHING');
 
-    // Subscribe to MQTT beacon topic
+    // Subscribe to MQTT beacon topic using dedicated scanner client
     try {
-      this.mqttClient = mqtt.connect(PRIMARY_BROKER, {
+      this.discoveryMqttClient = mqtt.connect(PRIMARY_BROKER, {
         keepalive: 30,
         reconnectPeriod: 2500,
         connectTimeout: 8000,
         clientId: `cm8_scan_${Math.random().toString(16).slice(2, 8)}`,
       });
 
-      this.mqttClient.on('connect', () => {
-        this.mqttClient?.subscribe(LocalTransport.BEACON_TOPIC);
+      this.discoveryMqttClient.on('connect', () => {
+        this.discoveryMqttClient?.subscribe(LocalTransport.BEACON_TOPIC);
       });
 
-      this.mqttClient.on('message', (topic, payload) => {
+      this.discoveryMqttClient.on('message', (topic, payload) => {
         if (topic === LocalTransport.BEACON_TOPIC) {
           try {
             const data = JSON.parse(payload.toString()) as NetworkPacket;
@@ -231,7 +234,7 @@ export class LocalTransport {
       } catch {}
     }
 
-    this.beaconIntervalId = window.setInterval(() => {
+    this.discoveryScanIntervalId = window.setInterval(() => {
       this.pruneStaleRooms();
     }, 2500);
   }
@@ -267,16 +270,20 @@ export class LocalTransport {
 
   public stopDiscovery(): void {
     if (this.discoveryChannel) {
-      this.discoveryChannel.close();
+      try {
+        this.discoveryChannel.close();
+      } catch {}
       this.discoveryChannel = null;
     }
-    if (this.mqttClient) {
-      this.mqttClient.end(true);
-      this.mqttClient = null;
+    if (this.discoveryMqttClient) {
+      try {
+        this.discoveryMqttClient.end(true);
+      } catch {}
+      this.discoveryMqttClient = null;
     }
-    if (this.beaconIntervalId !== null) {
-      clearInterval(this.beaconIntervalId);
-      this.beaconIntervalId = null;
+    if (this.discoveryScanIntervalId !== null) {
+      clearInterval(this.discoveryScanIntervalId);
+      this.discoveryScanIntervalId = null;
     }
   }
 
@@ -285,7 +292,7 @@ export class LocalTransport {
     this.cleanup();
     this.isHost = false;
     this.currentRoomCode = roomCode.toUpperCase();
-    this.localPlayerId = clientPlayer.id;
+    this.localPlayerId = clientPlayer.id || 'p2_guest';
     this.sequenceCounter = 0;
     this.seenSequences.clear();
 
@@ -302,7 +309,7 @@ export class LocalTransport {
       } catch {}
     }
 
-    const joinReq: NetworkPacket = {
+    const createJoinReq = (): NetworkPacket => ({
       type: 'JOIN_REQUEST',
       roomCode: this.currentRoomCode,
       senderId: this.localPlayerId,
@@ -310,7 +317,7 @@ export class LocalTransport {
       timestamp: Date.now(),
       playerName: clientPlayer.name,
       playerAvatar: clientPlayer.avatarSeed,
-    };
+    });
 
     try {
       this.mqttClient = mqtt.connect(PRIMARY_BROKER, {
@@ -325,7 +332,7 @@ export class LocalTransport {
         this.mqttClient.subscribe(this.roomTopic, { qos: 1 }, (err) => {
           if (!err) {
             // Send Join Request immediately upon subscription
-            this.send(joinReq);
+            this.send(createJoinReq());
             this.lastPeerSeenTimestamp = Date.now();
             this.startHeartbeatLoop();
           }
@@ -351,14 +358,14 @@ export class LocalTransport {
     // Send Join Request on local channel as well
     if (this.roomChannel) {
       try {
-        this.roomChannel.postMessage(joinReq);
+        this.roomChannel.postMessage(createJoinReq());
       } catch {}
     }
 
     // Keep resending Join Request every 1.5 seconds until Host responds with JOIN_ACCEPT or MATCH_START
     this.joinRetryIntervalId = window.setInterval(() => {
       if (this.lobbyState === 'CONNECTING') {
-        this.send(joinReq);
+        this.send(createJoinReq());
       } else {
         if (this.joinRetryIntervalId !== null) {
           clearInterval(this.joinRetryIntervalId);
@@ -375,7 +382,9 @@ export class LocalTransport {
   // 4. Send Packet
   public send(packet: NetworkPacket): void {
     packet.roomCode = this.currentRoomCode;
-    packet.senderId = this.localPlayerId;
+    packet.senderId = this.localPlayerId || (this.isHost ? 'p1_host' : 'p2_guest');
+    (packet as any).role = this.isHost ? 'host' : 'guest';
+    (packet as any).instanceId = this.instanceId;
     packet.sequence = ++this.sequenceCounter;
     packet.timestamp = Date.now();
 
@@ -402,21 +411,31 @@ export class LocalTransport {
   private handleIncomingPacket(packet: NetworkPacket): void {
     if (!packet || typeof packet !== 'object') return;
 
-    // Ignore packets sent by ourselves
-    if (packet.senderId === this.localPlayerId) return;
+    // Ignore packets sent by this exact client instance
+    if ((packet as any).instanceId && (packet as any).instanceId === this.instanceId) {
+      return;
+    }
+
+    // Ignore packets from same role (host won't process host packets, guest won't process guest packets)
+    if ((packet as any).role && (packet as any).role === (this.isHost ? 'host' : 'guest')) {
+      return;
+    }
 
     // Ignore packets for a different room
     if (packet.roomCode && this.sanitizeCode(packet.roomCode) !== this.sanitizeCode(this.currentRoomCode)) {
       return;
     }
 
-    // Deduplication check
-    const packetKey = `${packet.senderId}_${packet.sequence}_${packet.type}`;
-    if (this.seenSequences.has(packetKey)) return;
-    this.seenSequences.add(packetKey);
-    if (this.seenSequences.size > 200) {
-      const it = this.seenSequences.values();
-      for (let i = 0; i < 50; i++) this.seenSequences.delete(it.next().value!);
+    // Deduplication check (allow high-frequency real-time packets like AIM_UPDATE / TIME_SYNC to bypass long-term deduplication)
+    const isStreamPacket = packet.type === 'AIM_UPDATE' || packet.type === 'TIME_SYNC' || packet.type === 'HEARTBEAT';
+    if (!isStreamPacket) {
+      const packetKey = `${packet.senderId}_${packet.sequence}_${packet.type}`;
+      if (this.seenSequences.has(packetKey)) return;
+      this.seenSequences.add(packetKey);
+      if (this.seenSequences.size > 200) {
+        const it = this.seenSequences.values();
+        for (let i = 0; i < 50; i++) this.seenSequences.delete(it.next().value!);
+      }
     }
 
     // Refresh peer keepalive timestamp
@@ -444,7 +463,11 @@ export class LocalTransport {
 
       case 'JOIN_REQUEST':
         if (this.isHost) {
-          this.stopDiscovery();
+          // Stop beacon broadcasting interval once opponent joins, but keep room mqttClient alive!
+          if (this.beaconIntervalId !== null) {
+            clearInterval(this.beaconIntervalId);
+            this.beaconIntervalId = null;
+          }
           this.setState('CONNECTED', 'تم انضمام الخصم للغرفة');
         }
         this.events.onPacket(packet);
@@ -452,6 +475,19 @@ export class LocalTransport {
 
       case 'JOIN_ACCEPT':
         this.setState('CONNECTED', 'تم الانضمام للغرفة بنجاح');
+        if (this.joinRetryIntervalId !== null) {
+          clearInterval(this.joinRetryIntervalId);
+          this.joinRetryIntervalId = null;
+        }
+        this.events.onPacket(packet);
+        break;
+
+      case 'MATCH_START':
+        this.setState('CONNECTED', 'بدأت المباراة');
+        if (this.joinRetryIntervalId !== null) {
+          clearInterval(this.joinRetryIntervalId);
+          this.joinRetryIntervalId = null;
+        }
         this.events.onPacket(packet);
         break;
 

@@ -200,9 +200,50 @@ export default function App() {
   const [lanRounds, setLanRounds] = useState<MatchRounds>(1);
   const [lanFramesWon, setLanFramesWon] = useState<{ p1: number; p2: number }>({ p1: 0, p2: 0 });
   const localTransportRef = useRef<LocalTransport | null>(null);
+  const inboundLanPacketRef = useRef<((packet: NetworkPacket, asHost: boolean) => void) | null>(null);
+  const lastAimBroadcastRef = useRef<number>(0);
 
   // Turn authorization (Host is p1 index 0, Client is p2 index 1)
   const isMyTurn = !isLanMatch || (isLanHost ? activePlayerIndex === 0 : activePlayerIndex === 1);
+
+  // Throttled Aim/Power/Spin Broadcast for real-time LAN sync
+  const broadcastAim = useCallback((angle: number, power: number, currentSpin: Vector2D) => {
+    if (!isLanMatch || !isMyTurn) return;
+    const now = Date.now();
+    if (now - lastAimBroadcastRef.current > 30) {
+      lastAimBroadcastRef.current = now;
+      localTransportRef.current?.send({
+        type: 'AIM_UPDATE',
+        angle,
+        power,
+        spin: currentSpin,
+        playerIndex: activePlayerIndex,
+      } as any);
+    }
+  }, [isLanMatch, isMyTurn, activePlayerIndex]);
+
+  const handleAimAngleChange = useCallback((newAngle: number) => {
+    setAimAngle(newAngle);
+    broadcastAim(newAngle, cuePower, spin);
+  }, [broadcastAim, cuePower, spin]);
+
+  const handleAngleNudge = useCallback((delta: number) => {
+    setAimAngle(prev => {
+      const next = prev + delta;
+      broadcastAim(next, cuePower, spin);
+      return next;
+    });
+  }, [broadcastAim, cuePower, spin]);
+
+  const handleCuePowerChange = useCallback((newPower: number) => {
+    setCuePower(newPower);
+    broadcastAim(aimAngle, newPower, spin);
+  }, [broadcastAim, aimAngle, spin]);
+
+  const handleSpinChange = useCallback((newSpin: Vector2D) => {
+    setSpin(newSpin);
+    broadcastAim(aimAngle, cuePower, newSpin);
+  }, [broadcastAim, aimAngle, cuePower]);
 
   // Equipped Cosmetics
   const equippedCue = DEFAULT_CUES.find(c => c.id === saveData.selectedCueId) || DEFAULT_CUES[0];
@@ -348,6 +389,13 @@ export default function App() {
         power,
         spin: shotSpin,
       } as any);
+      localTransportRef.current?.send({
+        type: 'AIM_UPDATE',
+        angle,
+        power: 0,
+        spin: shotSpin,
+        playerIndex: activePlayerIndex,
+      } as any);
       setTurnPhase('SIMULATING');
       return;
     }
@@ -370,6 +418,13 @@ export default function App() {
 
       // If LAN Host, broadcast executed shot to client
       if (isLanMatch && isLanHost) {
+        localTransportRef.current?.send({
+          type: 'AIM_UPDATE',
+          angle,
+          power: 0,
+          spin: shotSpin,
+          playerIndex: activePlayerIndex,
+        } as any);
         localTransportRef.current?.send({
           type: 'SHOT_EXECUTED',
           angle,
@@ -778,7 +833,7 @@ export default function App() {
     };
   }, [activePlayerIndex, currentScreen, turnPhase]);
 
-  // Shot Clock Countdown
+  // Shot Clock Countdown (Host-Authoritative in LAN)
   useEffect(() => {
     if (
       currentScreen !== 'PLAYING' ||
@@ -789,20 +844,44 @@ export default function App() {
       return;
     }
 
+    // Client in LAN match is synchronized by Host's TIME_SYNC packets
+    if (isLanMatch && !isLanHost) {
+      return;
+    }
+
     const interval = setInterval(() => {
       setShotClock(prev => {
-        if (prev <= 1) {
+        const next = prev - 1;
+        if (next <= 0) {
           soundFX.playFoulSound();
-          setActivePlayerIndex(curr => (curr === 0 ? 1 : 0));
+          const nextIdx = activePlayerIndex === 0 ? 1 : 0;
+          setActivePlayerIndex(nextIdx);
           setTurnPhase('AIMING');
+
+          if (isLanMatch && isLanHost) {
+            localTransportRef.current?.send({
+              type: 'TIME_SYNC',
+              shotClock: 35,
+              activePlayerIndex: nextIdx,
+            } as any);
+          }
           return 35;
         }
-        return prev - 1;
+
+        if (isLanMatch && isLanHost) {
+          localTransportRef.current?.send({
+            type: 'TIME_SYNC',
+            shotClock: next,
+            activePlayerIndex,
+          } as any);
+        }
+
+        return next;
       });
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [currentScreen, turnPhase]);
+  }, [currentScreen, turnPhase, isLanMatch, isLanHost, activePlayerIndex]);
 
   // Keyboard navigation shortcuts
   useEffect(() => {
@@ -869,7 +948,7 @@ export default function App() {
       if (packet.type === 'JOIN_REQUEST') {
         soundFX.playVictoryChime();
         const guestPlayer: Player = {
-          id: packet.senderId,
+          id: packet.senderId || 'p2_guest',
           name: packet.playerName,
           isAI: false,
           group: 'undetermined',
@@ -878,6 +957,9 @@ export default function App() {
           cueId: 'cue_classic_wood',
         };
         setPlayer2(guestPlayer);
+
+        const currentBalls = ballsRef.current && ballsRef.current.length > 0 ? ballsRef.current : balls;
+        const ballsToSend = currentBalls.length > 0 ? currentBalls : rules8Ball.current.initializeBalls();
 
         // Host responds with JOIN_ACCEPT and authoritative MATCH_START
         localTransportRef.current?.send({
@@ -888,22 +970,48 @@ export default function App() {
           rounds: lanRounds,
         } as any);
 
-        localTransportRef.current?.send({
-          type: 'MATCH_START',
-          initialBalls: ballsRef.current.length > 0 ? ballsRef.current : balls,
-          mode: gameMode,
-          ruleVariant,
-          rounds: lanRounds,
-          player1,
-          player2: guestPlayer,
-        } as any);
+        const sendStart = () => {
+          localTransportRef.current?.send({
+            type: 'MATCH_START',
+            initialBalls: ballsToSend,
+            mode: gameMode,
+            ruleVariant,
+            rounds: lanRounds,
+            player1,
+            player2: guestPlayer,
+          } as any);
+        };
+
+        sendStart();
+        setTimeout(sendStart, 350);
 
         setStatusMessage(`${packet.playerName} joined! Your break shot.`);
         setStatusMessageAr(`انضم ${packet.playerName}! دورك في ضربة البداية.`);
+      } else if (packet.type === 'AIM_UPDATE') {
+        if (!isMyTurn) {
+          setAimAngle(packet.angle);
+          setCuePower(packet.power);
+          if (packet.spin) setSpin(packet.spin);
+        }
       } else if (packet.type === 'SHOT_INTENT') {
-        const cue = balls.find(b => b.number === 0);
+        const currentBalls = ballsRef.current && ballsRef.current.length > 0 ? ballsRef.current : balls;
+        const cue = currentBalls.find(b => b.number === 0);
         if (cue && !cue.isPocketed) {
+          shotReportRef.current = {
+            cueBallHitFirst: null,
+            ballsPocketedThisShot: [],
+            cushionHitAfterFirstContact: false,
+            cueBallPocketed: false,
+            anyBallLeftTable: false,
+          };
           physicsEngine.strikeBall(cue, packet.angle, packet.power, packet.spin);
+          localTransportRef.current?.send({
+            type: 'AIM_UPDATE',
+            angle: packet.angle,
+            power: 0,
+            spin: packet.spin,
+            playerIndex: activePlayerIndex,
+          } as any);
           localTransportRef.current?.send({
             type: 'SHOT_EXECUTED',
             angle: packet.angle,
@@ -922,7 +1030,10 @@ export default function App() {
         setStatusMessage('Joined room! Synchronizing table...');
         setStatusMessageAr('تم الانضمام للغرفة! جاري مزامنة الطاولة...');
       } else if (packet.type === 'MATCH_START') {
-        setBalls(packet.initialBalls);
+        if (packet.initialBalls && packet.initialBalls.length > 0) {
+          setBalls(packet.initialBalls);
+          ballsRef.current = packet.initialBalls;
+        }
         setPlayer1(packet.player1);
         setPlayer2(packet.player2);
         setGameMode(packet.mode);
@@ -930,9 +1041,19 @@ export default function App() {
         setLanRounds(packet.rounds);
         setActivePlayerIndex(0);
         setTurnPhase('AIMING');
+        setShotClock(35);
         setStatusMessage('Match started! Host has break shot.');
         setStatusMessageAr('بدأت المباراة! المضيف لديه ضربة البداية.');
         soundFX.playBallCollision(0.8);
+      } else if (packet.type === 'AIM_UPDATE') {
+        if (!isMyTurn) {
+          setAimAngle(packet.angle);
+          setCuePower(packet.power);
+          if (packet.spin) setSpin(packet.spin);
+        }
+      } else if (packet.type === 'TIME_SYNC') {
+        setShotClock(packet.shotClock);
+        setActivePlayerIndex(packet.activePlayerIndex);
       } else if (packet.type === 'SHOT_EXECUTED') {
         setBalls(prevBalls => {
           const cue = prevBalls.find(b => b.number === 0);
@@ -956,6 +1077,7 @@ export default function App() {
         setTurnPhase('AIMING');
       } else if (packet.type === 'TURN_RESULT') {
         setBalls(packet.balls);
+        ballsRef.current = packet.balls;
         setStatusMessage(packet.message);
         setStatusMessageAr(packet.messageAr);
 
@@ -979,7 +1101,9 @@ export default function App() {
         setShotClock(35);
       }
     }
-  }, [balls, gameMode, ruleVariant, lanRounds, player1, player2, handlePlaceBallInHand]);
+  }, [balls, gameMode, ruleVariant, lanRounds, player1, player2, isMyTurn, activePlayerIndex, handlePlaceBallInHand]);
+
+  inboundLanPacketRef.current = handleInboundLanPacket;
 
   // Host a Local LAN Match
   const handleStartLanHost = useCallback((config: {
@@ -995,6 +1119,14 @@ export default function App() {
     setGameMode(config.mode);
     setRuleVariant(config.ruleVariant);
 
+    const hostPlayer: Player = {
+      ...player1,
+      id: 'p1_host',
+      name: saveData.playerName || (isRTL ? 'إيميلي' : 'Emely'),
+      avatarSeed: saveData.avatarIcon || 'player1',
+    };
+    setPlayer1(hostPlayer);
+
     const transport = new LocalTransport({
       onStateChange: (state, detail) => {
         if (state === 'DISCONNECTED') {
@@ -1003,7 +1135,7 @@ export default function App() {
         }
       },
       onPacket: (packet) => {
-        handleInboundLanPacket(packet, true);
+        inboundLanPacketRef.current?.(packet, true);
       },
       onDiscoveredRoomsUpdate: () => {},
       onReconnectionCountdown: (sec) => {
@@ -1017,12 +1149,12 @@ export default function App() {
       mode: config.mode,
       ruleVariant: config.ruleVariant,
       rounds: config.rounds,
-      hostPlayer: player1,
+      hostPlayer,
     });
 
     startNewGame(config.mode, false);
     setPlayer2({
-      id: 'p2_waiting',
+      id: 'p2_guest',
       name: isRTL ? 'بانتظار الخصم...' : 'Waiting for opponent...',
       isAI: false,
       group: 'undetermined',
@@ -1033,13 +1165,31 @@ export default function App() {
     setStatusMessage(`Room ${config.roomCode} opened. Waiting for opponent...`);
     setStatusMessageAr(`تم فتح الغرفة ${config.roomCode}. بانتظار انضمام الخصم...`);
     setCurrentScreen('PLAYING');
-  }, [player1, startNewGame, isRTL, handleInboundLanPacket]);
+  }, [player1, saveData.playerName, saveData.avatarIcon, startNewGame, isRTL]);
 
   // Join a Local LAN Match
   const handleJoinLanRoom = useCallback((roomCode: string) => {
     setIsLanMatch(true);
     setIsLanHost(false);
     setLanFramesWon({ p1: 0, p2: 0 });
+
+    // 1. Immediately initialize balls rack so the table is never blank even before packet arrives!
+    const initBalls = rules8Ball.current.initializeBalls();
+    setBalls(initBalls);
+    ballsRef.current = initBalls;
+    setAimAngle(0);
+    setCuePower(0);
+    setSpin({ x: 0, y: 0 });
+    setTurnPhase('AIMING');
+    setShotClock(35);
+
+    const clientPlayer: Player = {
+      ...player1,
+      id: 'p2_guest',
+      name: saveData.playerName || (isRTL ? 'ضيف' : 'Guest'),
+      avatarSeed: saveData.avatarIcon || 'player2',
+    };
+    setPlayer2(clientPlayer);
 
     const transport = new LocalTransport({
       onStateChange: (state, detail) => {
@@ -1049,7 +1199,7 @@ export default function App() {
         }
       },
       onPacket: (packet) => {
-        handleInboundLanPacket(packet, false);
+        inboundLanPacketRef.current?.(packet, false);
       },
       onDiscoveredRoomsUpdate: () => {},
       onReconnectionCountdown: (sec) => {
@@ -1058,12 +1208,12 @@ export default function App() {
     });
 
     localTransportRef.current = transport;
-    transport.joinRoom(roomCode, player1);
+    transport.joinRoom(roomCode, clientPlayer);
 
     setStatusMessage(`Connecting to room ${roomCode}...`);
     setStatusMessageAr(`جاري الاتصال بالغرفة ${roomCode}...`);
     setCurrentScreen('PLAYING');
-  }, [player1, handleInboundLanPacket]);
+  }, [player1, saveData.playerName, saveData.avatarIcon, isRTL]);
 
   // Hot-Seat (Pass & Play on Same Device)
   const handleStartHotSeat = useCallback((mode: GameMode, variant: RuleVariant) => {
@@ -1157,8 +1307,8 @@ export default function App() {
             spin={spin}
             isZoomed={isZoomed}
             onToggleZoom={() => setIsZoomed(z => !z)}
-            onSpinChange={setSpin}
-            onAngleNudge={(delta) => setAimAngle(a => a + delta)}
+            onSpinChange={handleSpinChange}
+            onAngleNudge={handleAngleNudge}
             onPause={() => setCurrentScreen('PAUSED')}
             onToggleSound={handleToggleSound}
             soundEnabled={saveData.soundEnabled}
@@ -1212,7 +1362,7 @@ export default function App() {
                 disabled={!isMyTurn}
                 controlMode={controlMode3D}
                 cameraPreset3D={saveData.cameraPreset3D}
-                onAimAngleChange={setAimAngle}
+                onAimAngleChange={handleAimAngleChange}
                 onPlaceBallInHand={handlePlaceBallInHand}
                 onFallback2D={handleToggleViewMode}
                 language={language}
@@ -1235,7 +1385,7 @@ export default function App() {
                 gameMode={gameMode}
                 isZoomed={isZoomed}
                 disabled={!isMyTurn}
-                onAimAngleChange={setAimAngle}
+                onAimAngleChange={handleAimAngleChange}
                 onPlaceBallInHand={handlePlaceBallInHand}
                 language={language}
               />
@@ -1252,7 +1402,7 @@ export default function App() {
           >
             <CuePowerBar
               power={cuePower}
-              onChange={setCuePower}
+              onChange={handleCuePowerChange}
               onShoot={(shotPower) => {
                 const finalPower = typeof shotPower === 'number' && shotPower > 0 ? shotPower : (cuePower > 0 ? cuePower : 0.45);
                 executeShot(aimAngle, finalPower, spin);
