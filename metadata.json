@@ -1,0 +1,8 @@
+{
+  "name": "Cue Masters: 8 Ball Pool",
+  "description": "Authentic 8-ball and 9-ball pool game with tribal table styling, precision physics, multiplayer, and 2D/3D views.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

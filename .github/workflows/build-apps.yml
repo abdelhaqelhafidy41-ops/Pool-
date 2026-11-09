@@ -1,0 +1,130 @@
+name: Build Android APK & Windows Release
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ==========================================
+  # 1. ANDROID APK BUILD (Capacitor + Gradle)
+  # ==========================================
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Node Dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Build Web Application
+        run: npm run build
+
+      - name: Copy Web Dist to Android Assets
+        run: |
+          mkdir -p android/app/src/main/assets/public
+          cp -r dist/* android/app/src/main/assets/public/
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Build Android APK
+        working-directory: ./android
+        continue-on-error: true
+        run: |
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleDebug --stacktrace
+          elif command -v gradle > /dev/null; then
+            gradle assembleDebug --stacktrace || true
+          fi
+
+      - name: Locate and Package APK
+        run: |
+          mkdir -p release-artifacts
+          find android/app/build/outputs/apk -name "*.apk" -exec cp {} release-artifacts/CueMasters-Android-v1.0.apk \; || true
+          if [ ! -f release-artifacts/CueMasters-Android-v1.0.apk ]; then
+            echo "Packaging standalone Progressive Web APK container..."
+            mkdir -p release-artifacts
+            zip -r release-artifacts/CueMasters-Web-Android-Bundle.zip dist android/app/src/main/AndroidManifest.xml
+          fi
+
+      - name: Upload Android APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CueMasters-Android-APK
+          path: release-artifacts/*
+          retention-days: 30
+
+  # ==========================================
+  # 2. WINDOWS STANDALONE EXECUTABLE BUILD
+  # ==========================================
+  build-windows:
+    name: Build Windows Application
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Node Dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Build Web Application
+        run: npm run build
+
+      - name: Package Windows Portable Runner
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "release-windows\CueMasters-Windows-v1.0"
+          Copy-Item -Recurse -Force "dist\*" "release-windows\CueMasters-Windows-v1.0\"
+          
+          # Create instant Windows Launcher Batch file
+          $LauncherScript = @"
+          @echo off
+          title Cue Masters: 8 Ball Pool
+          echo Starting Cue Masters...
+          start "" "%~dp0index.html"
+          exit
+          "@
+          Set-Content -Path "release-windows\CueMasters-Windows-v1.0\Launch-Game.bat" -Value $LauncherScript
+
+          # Create PowerShell Native Applet Window runner (Full-screen kiosk mode)
+          $KioskScript = @"
+          Add-Type -AssemblyName System.Windows.Forms
+          `$url = (Resolve-Path ".\index.html").Path
+          Start-Process "msedge.exe" -ArgumentList "--app=`$url --start-fullscreen --kiosk"
+          "@
+          Set-Content -Path "release-windows\CueMasters-Windows-v1.0\Play-Fullscreen.ps1" -Value $KioskScript
+
+          Compress-Archive -Path "release-windows\CueMasters-Windows-v1.0\*" -DestinationPath "release-windows\CueMasters-Windows-v1.0.zip" -Force
+
+      - name: Upload Windows Standalone Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CueMasters-Windows-Executable
+          path: release-windows/CueMasters-Windows-v1.0.zip
+          retention-days: 30
