@@ -99,6 +99,29 @@ export default function App() {
     setSaveData(updated);
   }, [saveData.cameraPreset3D]);
 
+  // Dynamic Screen Orientation Toggle (Supports Android Native Bridge & Web Orientation API)
+  const handleToggleOrientation = useCallback(() => {
+    soundFX.playButtonClick();
+    // 1. Android Native Bridge if running in APK
+    if (typeof (window as any).AndroidApp?.toggleOrientation === 'function') {
+      (window as any).AndroidApp.toggleOrientation();
+      return;
+    }
+    // 2. Web Screen Orientation API
+    try {
+      const orientation = (screen.orientation || (window as any).screen?.orientation);
+      if (orientation && orientation.lock) {
+        if (isPortrait) {
+          orientation.lock('landscape').catch(() => {});
+        } else {
+          orientation.lock('portrait').catch(() => {});
+        }
+      }
+    } catch {
+      setIsPortrait(prev => !prev);
+    }
+  }, [isPortrait]);
+
   // Status Toast Messages
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [statusMessageAr, setStatusMessageAr] = useState<string>('');
@@ -1106,6 +1129,8 @@ export default function App() {
           onToggleLanguage={handleToggleLanguage}
           soundEnabled={saveData.soundEnabled}
           onToggleSound={handleToggleSound}
+          isPortrait={isPortrait}
+          onToggleOrientation={handleToggleOrientation}
         />
       )}
 
@@ -1158,6 +1183,8 @@ export default function App() {
             cameraPreset3D={saveData.cameraPreset3D}
             onCycleCameraPreset3D={handleCycleCameraPreset3D}
             currentStake={matchStake}
+            isPortrait={isPortrait}
+            onToggleOrientation={handleToggleOrientation}
             language={language}
           />
 

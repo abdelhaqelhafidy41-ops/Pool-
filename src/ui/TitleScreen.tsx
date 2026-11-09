@@ -26,6 +26,8 @@ interface TitleScreenProps {
   onToggleLanguage: () => void;
   soundEnabled: boolean;
   onToggleSound: () => void;
+  isPortrait?: boolean;
+  onToggleOrientation?: () => void;
 }
 
 export const TitleScreen: React.FC<TitleScreenProps> = ({
@@ -44,6 +46,8 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   onToggleLanguage,
   soundEnabled,
   onToggleSound,
+  isPortrait = false,
+  onToggleOrientation,
 }) => {
   const isRTL = language === 'ar';
   const [selectedDifficulty, setSelectedDifficulty] = React.useState<AIDifficulty>('medium');
@@ -183,6 +187,23 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           >
             {language === 'ar' ? 'EN' : 'عربي'}
           </button>
+
+          {/* Screen Orientation toggle (Landscape / Portrait) */}
+          {onToggleOrientation && (
+            <button
+              onClick={() => {
+                soundFX.playButtonClick();
+                onToggleOrientation();
+              }}
+              className="h-8 px-2 sm:px-2.5 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-amber-500/70 text-slate-300 hover:text-amber-400 text-xs font-bold transition-all flex items-center gap-1 shrink-0"
+              title={isRTL ? 'تدوير الشاشة (أفقي / عمودي)' : 'Rotate Screen (Landscape / Portrait)'}
+            >
+              <span>🔄</span>
+              <span className="hidden sm:inline">
+                {isPortrait ? (isRTL ? 'أفقي' : 'Landscape') : (isRTL ? 'عمودي' : 'Portrait')}
+              </span>
+            </button>
+          )}
 
           {/* Audio toggle */}
           <button

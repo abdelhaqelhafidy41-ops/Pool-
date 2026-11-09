@@ -3,6 +3,7 @@ package com.cuemasters.poolgame;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.pm.ActivityInfo;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
@@ -11,6 +12,7 @@ import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.ConsoleMessage;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -24,6 +26,33 @@ public class MainActivity extends Activity {
 
     private static final String TAG = "CueMasters";
     private WebView mWebView;
+
+    public class AndroidBridge {
+        @JavascriptInterface
+        public void toggleOrientation() {
+            runOnUiThread(() -> {
+                int current = getResources().getConfiguration().orientation;
+                if (current == Configuration.ORIENTATION_LANDSCAPE) {
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
+                } else {
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void setOrientation(String mode) {
+            runOnUiThread(() -> {
+                if ("landscape".equalsIgnoreCase(mode)) {
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+                } else if ("portrait".equalsIgnoreCase(mode)) {
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
+                } else {
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_FULL_USER);
+                }
+            });
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -40,8 +69,8 @@ public class MainActivity extends Activity {
             WindowManager.LayoutParams.FLAG_FULLSCREEN
         );
 
-        // Force landscape sensor orientation for authentic billiards table view
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        // Support both Portrait and Landscape dynamically based on user and device sensor
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_FULL_USER);
 
         setImmersiveMode();
 
@@ -74,6 +103,9 @@ public class MainActivity extends Activity {
 
         // Enable Chrome devtools inspection
         WebView.setWebContentsDebuggingEnabled(true);
+
+        // Expose AndroidBridge interface to JS
+        mWebView.addJavascriptInterface(new AndroidBridge(), "AndroidApp");
 
         // Android Jetpack WebViewAssetLoader:
         // Serves assets under https://appassets.androidplatform.net/assets/
@@ -136,6 +168,12 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        setImmersiveMode();
+    }
+
+    @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
@@ -155,6 +193,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        setImmersiveMode();
         if (mWebView != null) {
             mWebView.onResume();
         }

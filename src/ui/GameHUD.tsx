@@ -50,6 +50,8 @@ interface GameHUDProps {
   cameraPreset3D?: 'angled' | 'top_perspective' | 'cue_behind';
   onCycleCameraPreset3D?: () => void;
   currentStake?: number;
+  isPortrait?: boolean;
+  onToggleOrientation?: () => void;
   language: 'en' | 'ar';
 }
 
@@ -89,6 +91,8 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   cameraPreset3D = 'angled',
   onCycleCameraPreset3D,
   currentStake = 0,
+  isPortrait = false,
+  onToggleOrientation,
   language,
 }) => {
   const isRTL = language === 'ar';
@@ -531,6 +535,27 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             <span className="text-sm">{viewMode === '3d' ? '🧊' : '📐'}</span>
             <span className="tracking-wider">{viewMode === '3d' ? '3D' : '2D'}</span>
           </button>
+
+          {/* Dynamic Orientation Toggle (Landscape / Portrait) */}
+          {onToggleOrientation && (
+            <button
+              onClick={() => {
+                onToggleOrientation();
+                soundFX.playButtonClick();
+              }}
+              title={
+                isPortrait
+                  ? (isRTL ? 'التحويل للوضع الأفقي' : 'Switch to Landscape')
+                  : (isRTL ? 'التحويل للوضع العمودي' : 'Switch to Portrait')
+              }
+              className="h-8 sm:h-9 px-2 sm:px-2.5 rounded-xl border border-slate-700 bg-slate-900/95 text-amber-400 hover:text-white hover:border-amber-500 font-bold text-xs flex items-center gap-1 shadow-lg active:scale-95 transition-all shrink-0"
+            >
+              <span className="text-sm">🔄</span>
+              <span className="text-[10px] sm:text-xs hidden xs:inline tracking-wide">
+                {isPortrait ? (isRTL ? 'أفقي' : 'Landscape') : (isRTL ? 'عمودي' : 'Portrait')}
+              </span>
+            </button>
+          )}
 
           {/* Sound Mute/Unmute (Explicit shrink-0, always stays visible) */}
           <button
