@@ -1,0 +1,90 @@
+4s
+
+10.8 Open Source Software. In the event Open Source software is included with Evaluation Software, such Open Source software is licensed pursuant to the applicable Open Source software license agreement identified in the Open Source software comments in the applicable source code file(s) and/or file header as indicated in the Evaluation Software. Additional detail may be available (where applicable) in the accompanying on-line documentation. With respect to the Open Source software, nothing in this Agreement limits any rights under, or grants rights that supersede, the terms of any applicable Open Source software license agreement.
+---------------------------------------
+Accept? (y/N): All SDK package licenses accepted
+
+/usr/local/lib/android/sdk/cmdline-tools/16.0/bin/sdkmanager tools
+Loading package information...                                                  
+Loading local repository...                                                     
+[                                       ] 3% Loading local repository...        
+[                                       ] 3% Fetch remote repository...         
+[=                                      ] 3% Fetch remote repository...         
+[=                                      ] 4% Fetch remote repository...         
+[=                                      ] 5% Fetch remote repository...         
+[==                                     ] 5% Fetch remote repository...         
+[==                                     ] 6% Fetch remote repository...         
+[==                                     ] 7% Fetch remote repository...         
+[==                                     ] 7% Computing updates...               
+[===                                    ] 8% Computing updates...               
+[===                                    ] 10% Computing updates...              
+                                                                                
+Warning: Failed to find package 'tools'
+/home/runner/work/_actions/android-actions/setup-android/v3/dist/index.js:1823
+                error = new Error(`The process '${this.toolPath}' failed with exit code ${this.processExitCode}`);
+                        ^
+
+Error: The process '/usr/local/lib/android/sdk/cmdline-tools/16.0/bin/sdkmanager' failed with exit code 1
+    at ExecState._setResult (/home/runner/work/_actions/android-actions/setup-android/v3/dist/index.js:1823:25)
+    at ExecState.CheckComplete (/home/runner/work/_actions/android-actions/setup-android/v3/dist/index.js:1806:18)
+    at ChildProcess.<anonymous> (/home/runner/work/_actions/android-actions/setup-android/v3/dist/index.js:1700:27)
+    at ChildProcess.emit (node:events:514:28)
+    at maybeClose (node:internal/child_process:1172:16)
+    at ChildProcess._handle.onexit (node:internal/child_process:335:5)
+
+Node.js v24.22.1
+[===                                    ] 10% Computing updates...
+
+1s
+Run npm run build
+
+> react-example@0.0.0 build
+> vite build
+
+file:///D:/a/Pool-/Pool-/node_modules/rolldown/dist/shared/binding-0QzXBMwt.mjs:599
+			const error = /* @__PURE__ */ new Error("Cannot find native binding. npm has a bug related to optional dependencies (https://github.com/npm/cli/issues/4828). Please try `npm i` again after removing both package-lock.json and node_modules directory.");
+			                              ^
+
+Error: Cannot find native binding. npm has a bug related to optional dependencies (https://github.com/npm/cli/issues/4828). Please try `npm i` again after removing both package-lock.json and node_modules directory.
+    at file:///D:/a/Pool-/Pool-/node_modules/rolldown/dist/shared/binding-0QzXBMwt.mjs:599:34
+    at file:///D:/a/Pool-/Pool-/node_modules/rolldown/dist/shared/rolldown-runtime-DYf_mQCB.mjs:9:49
+    ... 2 lines matching cause stack trace ...
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24) {
+  cause: Error: Cannot find module '@rolldown/binding-wasm32-wasi'
+  Require stack:
+  - D:\a\Pool-\Pool-\node_modules\rolldown\dist\shared\rolldown-runtime-DYf_mQCB.mjs
+      at file:///D:/a/Pool-/Pool-/node_modules/rolldown/dist/shared/binding-0QzXBMwt.mjs:487:18
+      ... 6 lines matching cause stack trace ...
+      at async ModuleLoader.import (node:internal/modules/esm/loader:606:24) {
+    cause: Error: Cannot find module './rolldown-binding.wasi.cjs'
+    Require stack:
+    - D:\a\Pool-\Pool-\node_modules\rolldown\dist\shared\rolldown-runtime-DYf_mQCB.mjs
+        at file:///D:/a/Pool-/Pool-/node_modules/rolldown/dist/shared/binding-0QzXBMwt.mjs:487:18
+        ... 6 lines matching cause stack trace ...
+        at async ModuleLoader.import (node:internal/modules/esm/loader:606:24) {
+      cause: Error: Cannot find module '@rolldown/binding-win32-x64-msvc'
+      Require stack:
+      - D:\a\Pool-\Pool-\node_modules\rolldown\dist\shared\rolldown-runtime-DYf_mQCB.mjs
+          at file:///D:/a/Pool-/Pool-/node_modules/rolldown/dist/shared/binding-0QzXBMwt.mjs:487:18
+          ... 6 lines matching cause stack trace ...
+          at async ModuleLoader.import (node:internal/modules/esm/loader:606:24) {
+        cause: Error: Cannot find module './rolldown-binding.win32-x64-msvc.node'
+        Require stack:
+        - D:\a\Pool-\Pool-\node_modules\rolldown\dist\shared\rolldown-runtime-DYf_mQCB.mjs
+            at file:///D:/a/Pool-/Pool-/node_modules/rolldown/dist/shared/binding-0QzXBMwt.mjs:487:18
+            at Array.reduce (<anonymous>)
+            at createLoadErrorChain (file:///D:/a/Pool-/Pool-/node_modules/rolldown/dist/shared/binding-0QzXBMwt.mjs:480:17)
+            at file:///D:/a/Pool-/Pool-/node_modules/rolldown/dist/shared/binding-0QzXBMwt.mjs:600:18
+            at file:///D:/a/Pool-/Pool-/node_modules/rolldown/dist/shared/rolldown-runtime-DYf_mQCB.mjs:9:49
+            at file:///D:/a/Pool-/Pool-/node_modules/rolldown/dist/shared/parse-DPCdsGgB.mjs:4:46
+            at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+            at async ModuleLoader.import (node:internal/modules/esm/loader:606:24) {
+          cause: null
+        }
+      }
+    }
+  }
+}
+
+Node.js v20.20.2
+Error: Process completed with exit code 1.

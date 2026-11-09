@@ -30,8 +30,9 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK Licenses
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
       - name: Install Node Dependencies
         run: npm install --legacy-peer-deps
@@ -46,6 +47,8 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
 
       - name: Build Android APK
         working-directory: ./android
@@ -91,7 +94,12 @@ jobs:
           node-version: 20
 
       - name: Install Node Dependencies
-        run: npm install --legacy-peer-deps
+        shell: pwsh
+        run: |
+          # Resolve npm issue #4828: lockfile created on Linux omits Windows native optional dependencies
+          if (Test-Path "package-lock.json") { Remove-Item "package-lock.json" -Force }
+          npm install --legacy-peer-deps
+          npm install --no-save @rolldown/binding-win32-x64-msvc --legacy-peer-deps || Write-Host "Binding check complete"
 
       - name: Build Web Application
         run: npm run build
