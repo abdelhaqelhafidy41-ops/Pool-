@@ -50,33 +50,33 @@ jobs:
         with:
           gradle-version: '8.5'
 
-      - name: Build Android APK
+      - name: Build Android APK with Gradle
         working-directory: ./android
-        continue-on-error: true
         run: |
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew assembleDebug --stacktrace
-          elif command -v gradle > /dev/null; then
-            gradle assembleDebug --stacktrace || true
-          fi
+          gradle assembleDebug --stacktrace
 
-      - name: Locate and Package APK
+      - name: Locate and Package Android APK
         run: |
           mkdir -p release-artifacts
-          find android/app/build/outputs/apk -name "*.apk" -exec cp {} release-artifacts/CueMasters-Android-v1.0.apk \; || true
-          if [ ! -f release-artifacts/CueMasters-Android-v1.0.apk ]; then
-            echo "Packaging standalone Progressive Web APK container..."
-            mkdir -p release-artifacts
-            zip -r release-artifacts/CueMasters-Web-Android-Bundle.zip dist android/app/src/main/AndroidManifest.xml
+          APK_FILE=$(find android/app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            APK_FILE=$(find android/app/build/outputs/apk -name "*.apk" | head -n 1)
+          fi
+          if [ -n "$APK_FILE" ] && [ -f "$APK_FILE" ]; then
+            echo "Successfully generated APK: $APK_FILE"
+            cp "$APK_FILE" release-artifacts/CueMasters-8BallPool.apk
+          else
+            echo "ERROR: Failed to generate Android APK."
+            exit 1
           fi
 
-      - name: Upload Android APK Artifact
+      - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: CueMasters-Android-APK
-          path: release-artifacts/*
+          name: CueMasters-8BallPool-Android-APK
+          path: release-artifacts/CueMasters-8BallPool.apk
           retention-days: 30
+          if-no-files-found: error
 
   # ==========================================
   # 2. WINDOWS STANDALONE EXECUTABLE BUILD

@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Cue Masters: 8 Ball Pool</string>
+    <string name="title_activity_main">Cue Masters</string>
+    <string name="package_name">com.cuemasters.poolgame</string>
+</resources>

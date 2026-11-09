@@ -21,18 +21,18 @@
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
-        android:label="Cue Masters"
+        android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+        android:theme="@style/AppTheme"
         android:hardwareAccelerated="true"
         android:usesCleartextTraffic="true">
 
         <activity
             android:name=".MainActivity"
-            android:label="Cue Masters: 8 Ball Pool"
+            android:label="@string/app_name"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
-            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:theme="@style/AppTheme"
             android:screenOrientation="sensorLandscape"
             android:launchMode="singleTask"
             android:exported="true">

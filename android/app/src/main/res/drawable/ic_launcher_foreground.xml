@@ -1,0 +1,21 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 8-Ball circle -->
+    <path
+        android:fillColor="#111827"
+        android:pathData="M54,24 A30,30 0 1,0 54,84 A30,30 0 1,0 54,24 Z"/>
+    <!-- 8-Ball white center -->
+    <path
+        android:fillColor="#ffffff"
+        android:pathData="M54,39 A15,15 0 1,0 54,69 A15,15 0 1,0 54,39 Z"/>
+    <!-- 8 digit top and bottom circles -->
+    <path
+        android:fillColor="#0f172a"
+        android:pathData="M54,44 A4.5,4.5 0 1,0 54,53 A4.5,4.5 0 1,0 54,44 Z"/>
+    <path
+        android:fillColor="#0f172a"
+        android:pathData="M54,54 A5.5,5.5 0 1,0 54,65 A5.5,5.5 0 1,0 54,54 Z"/>
+</vector>
