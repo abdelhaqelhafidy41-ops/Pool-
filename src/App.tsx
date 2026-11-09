@@ -890,7 +890,7 @@ export default function App() {
 
         localTransportRef.current?.send({
           type: 'MATCH_START',
-          initialBalls: balls,
+          initialBalls: ballsRef.current.length > 0 ? ballsRef.current : balls,
           mode: gameMode,
           ruleVariant,
           rounds: lanRounds,

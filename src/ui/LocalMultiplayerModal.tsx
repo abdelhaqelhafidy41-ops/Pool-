@@ -39,7 +39,7 @@ export const LocalMultiplayerModal: React.FC<LocalMultiplayerModalProps> = ({
   const [hostVariant, setHostVariant] = useState<RuleVariant>('wpa_official');
   const [hostRounds, setHostRounds] = useState<MatchRounds>(3);
   const [customRoomCode, setCustomRoomCode] = useState(
-    () => 'CUE-' + Math.floor(10 + Math.random() * 90)
+    () => 'POOL' + Math.floor(10 + Math.random() * 90)
   );
 
   // Manual Join Input
@@ -362,7 +362,7 @@ export const LocalMultiplayerModal: React.FC<LocalMultiplayerModalProps> = ({
                   type="text"
                   value={manualCode}
                   onChange={(e) => setManualCode(e.target.value.toUpperCase())}
-                  placeholder={isRTL ? 'أدخل رمز الغرفة (مثال: CUE-42)' : 'Enter room code (e.g. CUE-42)'}
+                  placeholder={isRTL ? 'أدخل رمز الغرفة (مثال: POOL42)' : 'Enter room code (e.g. POOL42)'}
                   className="flex-1 bg-slate-900 border border-slate-700 px-3.5 py-2 rounded-xl text-xs font-mono text-white placeholder-slate-500 outline-none focus:border-sky-400"
                 />
                 <button

@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { Peer, type DataConnection } from 'peerjs';
 import { GameMode, Player, RuleVariant } from '../types/game';
 import {
   DiscoveredRoom,
   LocalLobbyState,
   MatchRounds,
   NetworkPacket,
-  PacketType,
 } from '../types/network';
 
 export interface TransportEvents {
@@ -22,6 +22,7 @@ export interface TransportEvents {
 export class LocalTransport {
   public static readonly DISCOVERY_CHANNEL = 'cue_masters_lan_discovery_beacon';
   public static readonly RECONNECT_GRACE_PERIOD_SEC = 30;
+  private static readonly PEER_PREFIX = 'cm8p_';
 
   private lobbyState: LocalLobbyState = 'IDLE';
   private currentRoomCode: string = '';
@@ -30,6 +31,11 @@ export class LocalTransport {
   private sequenceCounter: number = 0;
   private seenSequences: Set<string> = new Set();
 
+  // WebRTC P2P (Cross-Device on Wi-Fi / LAN)
+  private peer: Peer | null = null;
+  private activeConnection: DataConnection | null = null;
+
+  // Local BroadcastChannel fallback (Same device / multi-tab)
   private discoveryChannel: BroadcastChannel | null = null;
   private roomChannel: BroadcastChannel | null = null;
 
@@ -39,7 +45,7 @@ export class LocalTransport {
 
   private discoveredRoomsMap: Map<string, DiscoveredRoom> = new Map();
   private lastPeerSeenTimestamp: number = 0;
-  private latencyMs: number = 8;
+  private latencyMs: number = 10;
   private reconnectSecondsLeft: number = LocalTransport.RECONNECT_GRACE_PERIOD_SEC;
 
   private events: TransportEvents;
@@ -73,7 +79,11 @@ export class LocalTransport {
     this.events.onStateChange(newState, detail);
   }
 
-  // 1. Host Room Creation
+  private sanitizeCode(code: string): string {
+    return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+
+  // 1. Host Room Creation (Real WebRTC Peer ID + Local BroadcastChannel)
   public startHosting(config: {
     roomCode: string;
     mode: GameMode;
@@ -88,17 +98,67 @@ export class LocalTransport {
     this.sequenceCounter = 0;
     this.seenSequences.clear();
 
-    if (typeof window === 'undefined' || !('BroadcastChannel' in window)) {
-      this.setState('DISCONNECTED', 'BroadcastChannel not available in this browser');
-      return false;
+    const cleanCode = this.sanitizeCode(this.currentRoomCode);
+    const peerRoomId = `${LocalTransport.PEER_PREFIX}${cleanCode}`;
+
+    // Initialize WebRTC Peer with public STUN servers for robust NAT / Wi-Fi traversal
+    try {
+      this.peer = new Peer(peerRoomId, {
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:global.stun.twilio.com:3478' },
+          ],
+        },
+      });
+
+      this.peer.on('open', () => {
+        this.setState('ROOM_CREATED');
+      });
+
+      this.peer.on('connection', (conn) => {
+        this.activeConnection = conn;
+
+        conn.on('open', () => {
+          this.setState('CONNECTED', 'Opponent connected via direct WebRTC link');
+          this.lastPeerSeenTimestamp = Date.now();
+          this.startHeartbeatLoop();
+        });
+
+        conn.on('data', (data) => {
+          this.handleIncomingPacket(data);
+        });
+
+        conn.on('close', () => {
+          this.handlePeerDisconnect();
+        });
+
+        conn.on('error', (err) => {
+          console.warn('WebRTC data connection error:', err);
+        });
+      });
+
+      this.peer.on('error', (err: any) => {
+        console.warn('WebRTC host peer error:', err);
+        if (err.type === 'unavailable-id') {
+          // If ID temporarily active, still keep host open on local channels
+          this.setState('ROOM_CREATED', 'Host active with local channel fallback');
+        }
+      });
+    } catch (e) {
+      console.warn('WebRTC peer initialization error, falling back to BroadcastChannel:', e);
     }
 
-    // Open dedicated room channel
-    this.roomChannel = new BroadcastChannel(`cue_masters_room_${this.currentRoomCode}`);
-    this.roomChannel.onmessage = (event) => this.handleIncomingPacket(event.data);
+    // Local BroadcastChannel fallback for multi-tab testing
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        this.roomChannel = new BroadcastChannel(`cue_masters_room_${this.currentRoomCode}`);
+        this.roomChannel.onmessage = (event) => this.handleIncomingPacket(event.data);
 
-    // Open discovery channel to beacon room info on local network
-    this.discoveryChannel = new BroadcastChannel(LocalTransport.DISCOVERY_CHANNEL);
+        this.discoveryChannel = new BroadcastChannel(LocalTransport.DISCOVERY_CHANNEL);
+      } catch {}
+    }
 
     const sendBeacon = () => {
       if (this.discoveryChannel && this.lobbyState === 'ROOM_CREATED') {
@@ -114,11 +174,12 @@ export class LocalTransport {
           ruleVariant: config.ruleVariant,
           rounds: config.rounds,
         };
-        this.discoveryChannel.postMessage(beaconPacket);
+        try {
+          this.discoveryChannel.postMessage(beaconPacket);
+        } catch {}
       }
     };
 
-    // Send immediate beacon and repeat every 1.8s
     sendBeacon();
     this.beaconIntervalId = window.setInterval(sendBeacon, 1800);
 
@@ -126,32 +187,33 @@ export class LocalTransport {
     return true;
   }
 
-  // 2. Discover Rooms on Local Network
+  // 2. Discover Rooms
   public startDiscovery(): void {
-    if (typeof window === 'undefined' || !('BroadcastChannel' in window)) return;
     this.stopDiscovery();
-
     this.discoveredRoomsMap.clear();
     this.setState('SEARCHING');
 
-    this.discoveryChannel = new BroadcastChannel(LocalTransport.DISCOVERY_CHANNEL);
-    this.discoveryChannel.onmessage = (event) => {
-      const data = event.data as NetworkPacket;
-      if (data && data.type === 'BEACON') {
-        this.discoveredRoomsMap.set(data.roomCode, {
-          roomCode: data.roomCode,
-          hostName: data.hostName,
-          hostAvatar: data.hostAvatar,
-          mode: data.mode,
-          ruleVariant: data.ruleVariant,
-          rounds: data.rounds,
-          lastSeenTimestamp: Date.now(),
-        });
-        this.pruneStaleRooms();
-      }
-    };
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        this.discoveryChannel = new BroadcastChannel(LocalTransport.DISCOVERY_CHANNEL);
+        this.discoveryChannel.onmessage = (event) => {
+          const data = event.data as NetworkPacket;
+          if (data && data.type === 'BEACON') {
+            this.discoveredRoomsMap.set(data.roomCode, {
+              roomCode: data.roomCode,
+              hostName: data.hostName,
+              hostAvatar: data.hostAvatar,
+              mode: data.mode,
+              ruleVariant: data.ruleVariant,
+              rounds: data.rounds,
+              lastSeenTimestamp: Date.now(),
+            });
+            this.pruneStaleRooms();
+          }
+        };
+      } catch {}
+    }
 
-    // Periodic prune of rooms not seen in 5 seconds
     this.beaconIntervalId = window.setInterval(() => {
       this.pruneStaleRooms();
     }, 2500);
@@ -182,7 +244,7 @@ export class LocalTransport {
     }
   }
 
-  // 3. Join Room
+  // 3. Join Room (Connects via WebRTC DataChannel to Host)
   public async joinRoom(roomCode: string, clientPlayer: Player): Promise<boolean> {
     this.cleanup();
     this.isHost = false;
@@ -191,16 +253,19 @@ export class LocalTransport {
     this.sequenceCounter = 0;
     this.seenSequences.clear();
 
-    if (typeof window === 'undefined' || !('BroadcastChannel' in window)) {
-      this.setState('DISCONNECTED', 'BroadcastChannel not available');
-      return false;
+    const cleanCode = this.sanitizeCode(this.currentRoomCode);
+    const targetPeerId = `${LocalTransport.PEER_PREFIX}${cleanCode}`;
+
+    this.setState('CONNECTING', 'Connecting to host device over local network...');
+
+    // Open local BroadcastChannel fallback
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        this.roomChannel = new BroadcastChannel(`cue_masters_room_${this.currentRoomCode}`);
+        this.roomChannel.onmessage = (event) => this.handleIncomingPacket(event.data);
+      } catch {}
     }
 
-    this.setState('CONNECTING');
-    this.roomChannel = new BroadcastChannel(`cue_masters_room_${this.currentRoomCode}`);
-    this.roomChannel.onmessage = (event) => this.handleIncomingPacket(event.data);
-
-    // Send Join Request packet
     const joinReq: NetworkPacket = {
       type: 'JOIN_REQUEST',
       roomCode: this.currentRoomCode,
@@ -211,27 +276,91 @@ export class LocalTransport {
       playerAvatar: clientPlayer.avatarSeed,
     };
 
-    this.send(joinReq);
+    try {
+      this.peer = new Peer({
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:global.stun.twilio.com:3478' },
+          ],
+        },
+      });
+
+      this.peer.on('open', () => {
+        if (!this.peer) return;
+
+        const conn = this.peer.connect(targetPeerId, {
+          reliable: true,
+        });
+        this.activeConnection = conn;
+
+        conn.on('open', () => {
+          this.setState('CONNECTING', 'Direct P2P Link Established. Sending Join Request...');
+          conn.send(joinReq);
+          this.lastPeerSeenTimestamp = Date.now();
+          this.startHeartbeatLoop();
+        });
+
+        conn.on('data', (data) => {
+          this.handleIncomingPacket(data);
+        });
+
+        conn.on('close', () => {
+          this.handlePeerDisconnect();
+        });
+
+        conn.on('error', (err) => {
+          console.warn('WebRTC client connection error:', err);
+        });
+      });
+
+      this.peer.on('error', (err: any) => {
+        console.warn('WebRTC client peer error:', err);
+        if (err.type === 'peer-unavailable') {
+          this.setState(
+            'DISCONNECTED',
+            'لم يتم العثور على الغرفة. تأكد من فتح الغرفة في الجهاز الأول وإدخال نفس الرمز (Room not found. Check code on host).'
+          );
+        }
+      });
+    } catch (e) {
+      console.warn('WebRTC initialization failed, trying broadcast channel:', e);
+    }
+
+    // Also send on local BroadcastChannel if host is in another tab on the same device
+    if (this.roomChannel) {
+      try {
+        this.roomChannel.postMessage(joinReq);
+      } catch {}
+    }
+
     this.lastPeerSeenTimestamp = Date.now();
     this.startHeartbeatLoop();
-
     return true;
   }
 
-  // 4. Send Packet with safety and sequence numbering
+  // 4. Send Packet via WebRTC DataChannel + BroadcastChannel
   public send(packet: NetworkPacket): void {
-    if (!this.roomChannel) return;
-
-    // Stamp sequence and timestamp
     packet.roomCode = this.currentRoomCode;
     packet.senderId = this.localPlayerId;
     packet.sequence = ++this.sequenceCounter;
     packet.timestamp = Date.now();
 
-    try {
-      this.roomChannel.postMessage(packet);
-    } catch (e) {
-      console.warn('Transport send error:', e);
+    // 1. Direct WebRTC P2P DataChannel (Cross-Device)
+    if (this.activeConnection && this.activeConnection.open) {
+      try {
+        this.activeConnection.send(packet);
+      } catch (e) {
+        console.warn('WebRTC send error:', e);
+      }
+    }
+
+    // 2. BroadcastChannel fallback (Same Device)
+    if (this.roomChannel) {
+      try {
+        this.roomChannel.postMessage(packet);
+      } catch {}
     }
   }
 
@@ -247,11 +376,10 @@ export class LocalTransport {
     if (packet.roomCode && packet.roomCode !== this.currentRoomCode) return;
 
     // Deduplication check
-    const packetKey = `${packet.senderId}_${packet.sequence}`;
+    const packetKey = `${packet.senderId}_${packet.sequence}_${packet.type}`;
     if (this.seenSequences.has(packetKey)) return;
     this.seenSequences.add(packetKey);
     if (this.seenSequences.size > 200) {
-      // Keep set bounded
       const it = this.seenSequences.values();
       for (let i = 0; i < 50; i++) this.seenSequences.delete(it.next().value!);
     }
@@ -265,7 +393,6 @@ export class LocalTransport {
       this.setState('CONNECTED', 'Opponent reconnected');
     }
 
-    // Handle internal protocol packets
     switch (packet.type) {
       case 'HEARTBEAT':
         this.send({
@@ -281,8 +408,7 @@ export class LocalTransport {
       }
 
       case 'JOIN_REQUEST':
-        if (this.isHost && this.lobbyState === 'ROOM_CREATED') {
-          // Stop advertising room beacon once joined
+        if (this.isHost) {
           this.stopDiscovery();
           this.setState('CONNECTED', 'Opponent joined the room');
         }
@@ -310,24 +436,28 @@ export class LocalTransport {
     }
   }
 
-  // 6. Heartbeat Loop and Reconnection Grace Period
+  private handlePeerDisconnect(): void {
+    if (this.lobbyState === 'CONNECTED') {
+      this.startReconnectCountdown();
+    }
+  }
+
+  // 6. Heartbeat Loop
   public startHeartbeatLoop(): void {
     if (this.heartbeatIntervalId !== null) clearInterval(this.heartbeatIntervalId);
 
     this.heartbeatIntervalId = window.setInterval(() => {
       if (this.lobbyState !== 'CONNECTED' && this.lobbyState !== 'RECONNECTING') return;
 
-      // Send ping
       this.send({
         type: 'HEARTBEAT',
       } as NetworkPacket);
 
-      // Check if peer is silent
       const silentMs = Date.now() - this.lastPeerSeenTimestamp;
-      if (silentMs > 6000 && this.lobbyState === 'CONNECTED') {
+      if (silentMs > 8000 && this.lobbyState === 'CONNECTED') {
         this.startReconnectCountdown();
       }
-    }, 2400);
+    }, 2500);
   }
 
   private startReconnectCountdown(): void {
@@ -355,9 +485,9 @@ export class LocalTransport {
     }
   }
 
-  // 7. Safe Cleanup & Disconnect
+  // 7. Disconnect & Cleanup
   public disconnect(): void {
-    if (this.roomChannel && (this.lobbyState === 'CONNECTED' || this.lobbyState === 'ROOM_CREATED')) {
+    if (this.lobbyState === 'CONNECTED' || this.lobbyState === 'ROOM_CREATED') {
       try {
         const leavePacket: NetworkPacket = {
           type: 'LEAVE_ROOM',
@@ -366,10 +496,8 @@ export class LocalTransport {
           sequence: ++this.sequenceCounter,
           timestamp: Date.now(),
         };
-        this.roomChannel.postMessage(leavePacket);
-      } catch {
-        // Safe ignore
-      }
+        this.send(leavePacket);
+      } catch {}
     }
     this.cleanup();
     this.setState('IDLE');
@@ -384,8 +512,24 @@ export class LocalTransport {
       this.heartbeatIntervalId = null;
     }
 
+    if (this.activeConnection) {
+      try {
+        this.activeConnection.close();
+      } catch {}
+      this.activeConnection = null;
+    }
+
+    if (this.peer) {
+      try {
+        this.peer.destroy();
+      } catch {}
+      this.peer = null;
+    }
+
     if (this.roomChannel) {
-      this.roomChannel.close();
+      try {
+        this.roomChannel.close();
+      } catch {}
       this.roomChannel = null;
     }
 
