@@ -222,8 +222,9 @@ export class EightBallRuleEngine implements IRuleEngine {
       }
     }
 
-    const assignedP1 = assignedGroupActive ? (activePlayer.id === 'p1' ? assignedGroupActive : assignedGroupOther) : undefined;
-    const assignedP2 = assignedGroupActive ? (activePlayer.id === 'p1' ? assignedGroupOther : assignedGroupActive) : undefined;
+    const isP1Active = (tableState as any).activePlayerIndex === 0 || activePlayer.id === 'p1' || activePlayer.id === 'p1_host';
+    const assignedP1 = assignedGroupActive ? (isP1Active ? assignedGroupActive : assignedGroupOther) : undefined;
+    const assignedP2 = assignedGroupActive ? (isP1Active ? assignedGroupOther : assignedGroupActive) : undefined;
 
     // 7. Check if active player continues turn
     let playerContinues = false;

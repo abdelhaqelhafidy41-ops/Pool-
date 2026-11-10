@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Ball, GameMode, Player, RuleVariant, Vector2D } from './game';
+import { Ball, GameMode, Player, PlayerGroup, RuleVariant, Vector2D } from './game';
 
 export type LocalLobbyState =
   | 'IDLE'
@@ -125,6 +125,9 @@ export interface TurnResultPacket extends BasePacket {
   winnerPlayerId?: string;
   winReason?: string;
   winReasonAr?: string;
+  player1Group?: PlayerGroup;
+  player2Group?: PlayerGroup;
+  isOpenTable?: boolean;
 }
 
 export interface FrameWinPacket extends BasePacket {

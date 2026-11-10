@@ -393,7 +393,8 @@ export class LocalTransport {
     // 1. Send via MQTT over WebSocket (Cross-Device across all networks)
     if (this.mqttClient && this.mqttClient.connected && this.roomTopic) {
       try {
-        this.mqttClient.publish(this.roomTopic, payload, { qos: 1 });
+        const isStream = packet.type === 'AIM_UPDATE' || packet.type === 'TIME_SYNC' || packet.type === 'HEARTBEAT';
+        this.mqttClient.publish(this.roomTopic, payload, { qos: isStream ? 0 : 1 });
       } catch (e) {
         console.warn('MQTT publish error:', e);
       }

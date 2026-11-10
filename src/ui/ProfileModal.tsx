@@ -22,11 +22,15 @@ export const AVAILABLE_AVATARS = [
   { id: '🎱', label: 'الكرة الثامنة', labelEn: '8-Ball', type: 'emoji' },
   { id: '🎯', label: 'القناص', labelEn: 'Sniper', type: 'emoji' },
   { id: '👑', label: 'الملك', labelEn: 'Crown', type: 'emoji' },
+  { id: '🏆', label: 'البطل', labelEn: 'Champion', type: 'emoji' },
+  { id: '🦁', label: 'الأسد', labelEn: 'Lion', type: 'emoji' },
   { id: '🦅', label: 'الصقر', labelEn: 'Falcon', type: 'emoji' },
   { id: '🐺', label: 'الذئب', labelEn: 'Wolf', type: 'emoji' },
+  { id: '🐉', label: 'التنين', labelEn: 'Dragon', type: 'emoji' },
   { id: '⚡', label: 'البرق', labelEn: 'Thunder', type: 'emoji' },
   { id: '🔥', label: 'لهيب النار', labelEn: 'Fire', type: 'emoji' },
   { id: '💎', label: 'الجوهرة', labelEn: 'Diamond', type: 'emoji' },
+  { id: '🕶️', label: 'المحترف', labelEn: 'Pro Hustler', type: 'emoji' },
 ];
 
 export const ProfileModal: React.FC<ProfileModalProps> = ({
@@ -321,9 +325,21 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
               {/* Avatar Picker */}
               <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800">
-                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
-                  {isRTL ? 'اختيار الرمز التعبيري أو الصورة' : 'Select Avatar or Photo'}
-                </h4>
+                <div className="flex items-center justify-between mb-2.5">
+                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                    {isRTL ? 'اختيار الرمز التعبيري أو الصورة' : 'Select Avatar or Photo'}
+                  </h4>
+                  <label className="cursor-pointer px-2.5 py-1 bg-gradient-to-r from-sky-600 to-cyan-500 hover:from-sky-500 hover:to-cyan-400 text-white rounded-xl text-xs font-bold shadow flex items-center gap-1.5 transition-transform active:scale-95">
+                    <span>📷</span>
+                    <span>{isRTL ? 'رفع صورة من الجهاز' : 'Upload Photo'}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleUploadPhoto}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
                 <div className="flex flex-wrap gap-2">
                   {AVAILABLE_AVATARS.map((av) => {
                     const isSelected =

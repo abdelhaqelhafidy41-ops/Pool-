@@ -56,6 +56,7 @@ export interface UserSaveData {
   reducedMotion: boolean;
   powerGaugePosition: 'right' | 'left';
   viewMode: TableViewMode; // '2d' | '3d'
+  tableOrientation2D?: 'horizontal' | 'vertical'; // In-game 2D table rotation
   cameraPreset3D: 'angled' | 'top_perspective' | 'cue_behind';
   lastDailySpinTimestamp: number;
   diagnosticLogs: string[];
@@ -527,6 +528,7 @@ export class StorageManager {
     reducedMotion: false,
     powerGaugePosition: 'left',
     viewMode: '2d',
+    tableOrientation2D: 'horizontal',
     cameraPreset3D: 'angled',
     lastDailySpinTimestamp: 0,
     diagnosticLogs: [
@@ -879,6 +881,13 @@ export class StorageManager {
   public static setViewMode(mode: TableViewMode): UserSaveData {
     const data = this.load();
     data.viewMode = mode;
+    this.save(data);
+    return data;
+  }
+
+  public static setTableOrientation2D(orientation: 'horizontal' | 'vertical'): UserSaveData {
+    const data = this.load();
+    data.tableOrientation2D = orientation;
     this.save(data);
     return data;
   }

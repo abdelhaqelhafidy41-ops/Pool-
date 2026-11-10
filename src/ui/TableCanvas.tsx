@@ -21,6 +21,8 @@ interface TableCanvasProps {
   balls: Ball[];
   aimAngle: number;
   cuePower: number;
+  spin?: Vector2D;
+  tableOrientation?: 'horizontal' | 'vertical';
   cueItem: CueItem;
   feltTheme: TableFeltTheme;
   trailStyle?: string;
@@ -55,6 +57,8 @@ export const TableCanvas: React.FC<TableCanvasProps> = ({
   balls,
   aimAngle,
   cuePower,
+  spin,
+  tableOrientation = 'horizontal',
   cueItem,
   feltTheme,
   trailStyle = 'trail_none',
@@ -139,7 +143,7 @@ export const TableCanvas: React.FC<TableCanvasProps> = ({
   // Compute live trajectory
   const trajectory: TrajectoryPoint | null =
     cueBall && !cueBall.isPocketed && (turnPhase === 'AIMING' || turnPhase === 'PULLING_CUE')
-      ? TrajectoryCalculator.calculate(cueBall, balls, aimAngle, cueItem.aimGuideLength)
+      ? TrajectoryCalculator.calculate(cueBall, balls, aimAngle, cueItem.aimGuideLength, spin)
       : null;
 
   // 60fps render loop
@@ -150,10 +154,19 @@ export const TableCanvas: React.FC<TableCanvasProps> = ({
     if (!ctx) return;
 
     let animId: number;
+    const isVertical = tableOrientation === 'vertical';
 
     const render = () => {
-      ctx.clearRect(0, 0, TABLE_WIDTH, TABLE_HEIGHT);
-      ctx.save();
+      if (isVertical) {
+        ctx.clearRect(0, 0, TABLE_HEIGHT, TABLE_WIDTH);
+        ctx.save();
+        // Rotate 90 degrees clockwise so long table axis fits vertical mobile screen
+        ctx.translate(TABLE_HEIGHT, 0);
+        ctx.rotate(Math.PI / 2);
+      } else {
+        ctx.clearRect(0, 0, TABLE_WIDTH, TABLE_HEIGHT);
+        ctx.save();
+      }
 
       // Update 2D rolling / spinning state for all balls based on their real velocity and direction
       for (const ball of balls) {
@@ -275,13 +288,11 @@ export const TableCanvas: React.FC<TableCanvasProps> = ({
       }
 
       ctx.restore();
-
-      animId = requestAnimationFrame(render);
     };
 
     animId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animId);
-  }, [balls, aimAngle, cuePower, cueItem, trailStyle, ballStyle, highContrastMode, reducedMotion, turnPhase, trajectory, isRTL, cueBall, lowest9Ball, isZoomed, disabled, dragCuePos]);
+  }, [balls, aimAngle, cuePower, cueItem, spin, tableOrientation, trailStyle, ballStyle, highContrastMode, reducedMotion, turnPhase, trajectory, isRTL, cueBall, lowest9Ball, isZoomed, disabled, dragCuePos]);
 
   // Pointer event handlers for aiming or placing cue ball
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -289,11 +300,18 @@ export const TableCanvas: React.FC<TableCanvasProps> = ({
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = TABLE_WIDTH / rect.width;
-    const scaleY = TABLE_HEIGHT / rect.height;
+    const isVertical = tableOrientation === 'vertical';
+    const canvasW = isVertical ? TABLE_HEIGHT : TABLE_WIDTH;
+    const canvasH = isVertical ? TABLE_WIDTH : TABLE_HEIGHT;
+    const scaleX = canvasW / rect.width;
+    const scaleY = canvasH / rect.height;
 
-    let clickX = (e.clientX - rect.left) * scaleX;
-    let clickY = (e.clientY - rect.top) * scaleY;
+    const rawX = (e.clientX - rect.left) * scaleX;
+    const rawY = (e.clientY - rect.top) * scaleY;
+
+    // Transform from canvas pixels to logical table coordinate system
+    let clickX = isVertical ? rawY : rawX;
+    let clickY = isVertical ? (TABLE_HEIGHT - rawX) : rawY;
 
     // Invert zoom transform if active
     if (isZoomed && cueBall && !cueBall.isPocketed) {
@@ -333,11 +351,17 @@ export const TableCanvas: React.FC<TableCanvasProps> = ({
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const scaleX = TABLE_WIDTH / rect.width;
-    const scaleY = TABLE_HEIGHT / rect.height;
+    const isVertical = tableOrientation === 'vertical';
+    const canvasW = isVertical ? TABLE_HEIGHT : TABLE_WIDTH;
+    const canvasH = isVertical ? TABLE_WIDTH : TABLE_HEIGHT;
+    const scaleX = canvasW / rect.width;
+    const scaleY = canvasH / rect.height;
 
-    let pointerX = (e.clientX - rect.left) * scaleX;
-    let pointerY = (e.clientY - rect.top) * scaleY;
+    const rawX = (e.clientX - rect.left) * scaleX;
+    const rawY = (e.clientY - rect.top) * scaleY;
+
+    let pointerX = isVertical ? rawY : rawX;
+    let pointerY = isVertical ? (TABLE_HEIGHT - rawX) : rawY;
 
     if (isZoomed && cueBall && !cueBall.isPocketed) {
       const zoom = 1.25;
@@ -396,12 +420,20 @@ export const TableCanvas: React.FC<TableCanvasProps> = ({
     isPointerInteracting.current = false;
   };
 
+  const isVertical = tableOrientation === 'vertical';
+
   return (
-    <div className="relative w-full max-w-5xl max-h-full aspect-[980/530] mx-auto select-none touch-none rounded-2xl overflow-hidden shadow-2xl border-2 sm:border-4 border-amber-950/90 bg-[#060913]">
+    <div
+      className={`relative mx-auto select-none touch-none rounded-2xl overflow-hidden shadow-2xl border-2 sm:border-4 border-amber-950/90 bg-[#060913] ${
+        isVertical
+          ? 'w-auto h-full max-h-[78vh] aspect-[530/980]'
+          : 'w-full max-w-5xl max-h-full aspect-[980/530]'
+      }`}
+    >
       <canvas
         ref={canvasRef}
-        width={TABLE_WIDTH}
-        height={TABLE_HEIGHT}
+        width={isVertical ? TABLE_HEIGHT : TABLE_WIDTH}
+        height={isVertical ? TABLE_WIDTH : TABLE_HEIGHT}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}

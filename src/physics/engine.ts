@@ -298,6 +298,57 @@ export class PhysicsEngine {
                     this.triggerHaptic(12);
                   }
 
+                  // Real Spin / English physics effects on Cue Ball
+                  if (b1.number === 0) {
+                    // Backspin (Draw) pulls backward along line of impact
+                    if (b1.spin.y < -0.05) {
+                      const drawMag = Math.abs(b1.spin.y) * Math.min(18.0, impulse * 1.3 + 6.0);
+                      b1.velocity.x -= nx * drawMag;
+                      b1.velocity.y -= ny * drawMag;
+                    } else if (b1.spin.y > 0.05) {
+                      // Topspin (Follow) rolls forward through object ball
+                      const followMag = b1.spin.y * Math.min(15.0, impulse * 1.0 + 4.5);
+                      b1.velocity.x += nx * followMag;
+                      b1.velocity.y += ny * followMag;
+                    }
+                    // Sidespin (English) deflects tangent & imparts throw
+                    if (Math.abs(b1.spin.x) > 0.05) {
+                      const tx = -ny;
+                      const ty = nx;
+                      const englishMag = b1.spin.x * 5.5;
+                      b1.velocity.x += tx * englishMag;
+                      b1.velocity.y += ty * englishMag;
+                      b2.velocity.x -= tx * englishMag * 0.25;
+                      b2.velocity.y -= ty * englishMag * 0.25;
+                    }
+                    b1.spin.y *= 0.15;
+                    b1.spin.x *= 0.45;
+                  } else if (b2.number === 0) {
+                    // Backspin (Draw) for cue ball if b2
+                    if (b2.spin.y < -0.05) {
+                      const drawMag = Math.abs(b2.spin.y) * Math.min(18.0, impulse * 1.3 + 6.0);
+                      b2.velocity.x += nx * drawMag;
+                      b2.velocity.y += ny * drawMag;
+                    } else if (b2.spin.y > 0.05) {
+                      // Topspin (Follow)
+                      const followMag = b2.spin.y * Math.min(15.0, impulse * 1.0 + 4.5);
+                      b2.velocity.x -= nx * followMag;
+                      b2.velocity.y -= ny * followMag;
+                    }
+                    // Sidespin
+                    if (Math.abs(b2.spin.x) > 0.05) {
+                      const tx = -ny;
+                      const ty = nx;
+                      const englishMag = b2.spin.x * 5.5;
+                      b2.velocity.x += tx * englishMag;
+                      b2.velocity.y += ty * englishMag;
+                      b1.velocity.x -= tx * englishMag * 0.25;
+                      b1.velocity.y -= ty * englishMag * 0.25;
+                    }
+                    b2.spin.y *= 0.15;
+                    b2.spin.x *= 0.45;
+                  }
+
                   if (shotReport && shotReport.cueBallHitFirst === null) {
                     if (b1.number === 0) shotReport.cueBallHitFirst = b2.number;
                     else if (b2.number === 0) shotReport.cueBallHitFirst = b1.number;
@@ -346,12 +397,22 @@ export class PhysicsEngine {
               ball.velocity.x = (ball.velocity.x - (1 + this.config.restitutionCushion) * dot * nx);
               ball.velocity.y = (ball.velocity.y - (1 + this.config.restitutionCushion) * dot * ny);
 
-              // Influence rebound angle with sidespin
+              // Influence rebound angle with sidespin (English on rails)
               if (Math.abs(ball.spin.x) > 0.05) {
                 const tangentX = -ny;
                 const tangentY = nx;
-                ball.velocity.x += tangentX * ball.spin.x * 1.5;
-                ball.velocity.y += tangentY * ball.spin.x * 1.5;
+                ball.velocity.x += tangentX * ball.spin.x * 5.0;
+                ball.velocity.y += tangentY * ball.spin.x * 5.0;
+                ball.spin.x *= 0.75;
+              }
+
+              // Topspin/Backspin impact on cushion
+              if (ball.spin.y > 0.1) {
+                ball.velocity.x *= 1.05;
+                ball.velocity.y *= 1.05;
+              } else if (ball.spin.y < -0.1) {
+                ball.velocity.x *= 0.88;
+                ball.velocity.y *= 0.88;
               }
 
               // Dampen slightly along tangent

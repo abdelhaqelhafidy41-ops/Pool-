@@ -44,6 +44,8 @@ interface GameHUDProps {
   // 2D vs 3D View Mode Props
   viewMode: TableViewMode;
   onToggleViewMode: () => void;
+  tableOrientation2D?: 'horizontal' | 'vertical';
+  onToggleTableOrientation2D?: () => void;
   // 3D Aim / Orbit camera toggle & angle presets
   controlMode3D?: 'aim' | 'orbit';
   onToggleControlMode3D?: () => void;
@@ -86,6 +88,8 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   isMyTurn = true,
   viewMode,
   onToggleViewMode,
+  tableOrientation2D = 'horizontal',
+  onToggleTableOrientation2D,
   controlMode3D = 'aim',
   onToggleControlMode3D,
   cameraPreset3D = 'angled',
@@ -535,6 +539,31 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             <span className="text-sm">{viewMode === '3d' ? '🧊' : '📐'}</span>
             <span className="tracking-wider">{viewMode === '3d' ? '3D' : '2D'}</span>
           </button>
+
+          {/* 2D Table Rotation Button (Rotates pool table 90 deg between Horizontal and Vertical without rotating phone) */}
+          {viewMode === '2d' && onToggleTableOrientation2D && (
+            <button
+              onClick={() => {
+                onToggleTableOrientation2D();
+                soundFX.playButtonClick();
+              }}
+              title={
+                tableOrientation2D === 'vertical'
+                  ? (isRTL ? 'جعل الطاولة أفقية' : 'Make Table Horizontal')
+                  : (isRTL ? 'جعل الطاولة عمودية' : 'Make Table Vertical')
+              }
+              className={`h-8 sm:h-9 px-2 sm:px-2.5 rounded-xl border font-bold text-xs flex items-center gap-1 shadow-lg active:scale-95 transition-all shrink-0 ${
+                tableOrientation2D === 'vertical'
+                  ? 'bg-emerald-600 text-white border-emerald-400 ring-2 ring-emerald-400/40'
+                  : 'bg-slate-900/95 text-emerald-400 border-slate-700 hover:border-emerald-500 hover:text-white'
+              }`}
+            >
+              <span className="text-sm">🔁</span>
+              <span className="text-[10px] sm:text-xs hidden xs:inline tracking-wide">
+                {tableOrientation2D === 'vertical' ? (isRTL ? 'أفقية' : 'Horizontal') : (isRTL ? 'عمودية' : 'Vertical')}
+              </span>
+            </button>
+          )}
 
           {/* Dynamic Orientation Toggle (Landscape / Portrait) */}
           {onToggleOrientation && (

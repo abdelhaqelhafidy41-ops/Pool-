@@ -15,12 +15,15 @@ export class TrajectoryCalculator {
     cueBall: Ball,
     allBalls: Ball[],
     angleRad: number,
-    maxDistance: number = 550
+    maxDistance: number = 550,
+    spin?: Vector2D
   ): TrajectoryPoint {
     const dirX = Math.cos(angleRad);
     const dirY = Math.sin(angleRad);
     const startX = cueBall.position.x;
     const startY = cueBall.position.y;
+    const spinX = spin?.x || cueBall.spin?.x || 0;
+    const spinY = spin?.y || cueBall.spin?.y || 0;
 
     let closestDist = maxDistance;
     let hitBall: Ball | null = null;
@@ -62,11 +65,61 @@ export class TrajectoryCalculator {
       const targetDirX = normX / normLen;
       const targetDirY = normY / normLen;
 
-      // Cue ball deflects tangentially
+      // Base 90-degree tangential cue ball deflection
       const dot = dirX * targetDirX + dirY * targetDirY;
-      const cueDeflectX = dirX - dot * targetDirX;
-      const cueDeflectY = dirY - dot * targetDirY;
-      const cueDeflectLen = Math.sqrt(cueDeflectX * cueDeflectX + cueDeflectY * cueDeflectY) || 1;
+      let cueDeflectX = dirX - dot * targetDirX;
+      let cueDeflectY = dirY - dot * targetDirY;
+      let cueDeflectLen = Math.sqrt(cueDeflectX * cueDeflectX + cueDeflectY * cueDeflectY);
+
+      // Incorporate spin effect on cue ball post-collision vector
+      // spin.y < 0 is Draw / Backspin: pulls ball backward along collision normal
+      // spin.y > 0 is Topspin / Follow: drives ball forward along collision normal
+      // spin.x is Sidespin / English: deflects perpendicular to normal
+      if (cueDeflectLen < 0.05) {
+        // Nearly head-on hit:
+        if (spinY < -0.05) {
+          // Draw straight back
+          cueDeflectX = -targetDirX;
+          cueDeflectY = -targetDirY;
+          cueDeflectLen = 1;
+        } else if (spinY > 0.05) {
+          // Follow through forward
+          cueDeflectX = targetDirX;
+          cueDeflectY = targetDirY;
+          cueDeflectLen = 1;
+        } else {
+          cueDeflectX = 0;
+          cueDeflectY = 0;
+          cueDeflectLen = 0;
+        }
+      } else {
+        // Oblique hit: normalize base tangent then blend spin impulses
+        cueDeflectX /= cueDeflectLen;
+        cueDeflectY /= cueDeflectLen;
+
+        // Apply draw (negative normal) or follow (positive normal)
+        if (spinY < -0.05) {
+          const drawStrength = Math.abs(spinY) * 1.1;
+          cueDeflectX -= targetDirX * drawStrength;
+          cueDeflectY -= targetDirY * drawStrength;
+        } else if (spinY > 0.05) {
+          const followStrength = spinY * 0.9;
+          cueDeflectX += targetDirX * followStrength;
+          cueDeflectY += targetDirY * followStrength;
+        }
+
+        // Apply sidespin deflection
+        if (Math.abs(spinX) > 0.05) {
+          const perpX = -targetDirY * spinX * 0.45;
+          const perpY = targetDirX * spinX * 0.45;
+          cueDeflectX += perpX;
+          cueDeflectY += perpY;
+        }
+
+        cueDeflectLen = Math.sqrt(cueDeflectX * cueDeflectX + cueDeflectY * cueDeflectY) || 1;
+        cueDeflectX /= cueDeflectLen;
+        cueDeflectY /= cueDeflectLen;
+      }
 
       // Check secondary obstruction along target ball path
       let isObstructedSecondary = false;
@@ -87,6 +140,8 @@ export class TrajectoryCalculator {
         }
       }
 
+      const cuePathLen = cueDeflectLen > 0 ? (Math.abs(spinY) > 0.3 ? 110 : 85) : 0;
+
       return {
         ghostBallPos: ghostPos,
         hitBallId: hitBall.number,
@@ -94,10 +149,10 @@ export class TrajectoryCalculator {
           x: hitBall.position.x + targetDirX * (isObstructedSecondary ? 90 : targetPathLength),
           y: hitBall.position.y + targetDirY * (isObstructedSecondary ? 90 : targetPathLength),
         },
-        cueBallDeflection: {
-          x: ghostPos.x + (cueDeflectX / cueDeflectLen) * 90,
-          y: ghostPos.y + (cueDeflectY / cueDeflectLen) * 90,
-        },
+        cueBallDeflection: cuePathLen > 0 ? {
+          x: ghostPos.x + cueDeflectX * cuePathLen,
+          y: ghostPos.y + cueDeflectY * cuePathLen,
+        } : null,
         cushionBounces: [],
         isObstructedSecondary,
         confidenceNote: isObstructedSecondary ? 'Secondary collision: unpredictable bounce' : 'Direct primary trajectory',
@@ -106,7 +161,7 @@ export class TrajectoryCalculator {
     }
 
     // No ball hit: calculate cushion bank reflection
-    const cushionHit = this.findCushionIntersection(startX, startY, dirX, dirY, closestDist);
+    const cushionHit = this.findCushionIntersection(startX, startY, dirX, dirY, closestDist, spinX);
     return {
       ghostBallPos: cushionHit.point,
       hitBallId: null,
@@ -125,7 +180,8 @@ export class TrajectoryCalculator {
     oy: number,
     dx: number,
     dy: number,
-    maxDist: number
+    maxDist: number,
+    spinX: number = 0
   ): { point: Vector2D; reflected: Vector2D | null } {
     const left = PLAY_AREA.left + BALL_RADIUS;
     const right = PLAY_AREA.right - BALL_RADIUS;
@@ -176,8 +232,20 @@ export class TrajectoryCalculator {
     let reflectedPoint: Vector2D | null = null;
     if (hitNormalX !== 0 || hitNormalY !== 0) {
       const dot = dx * hitNormalX + dy * hitNormalY;
-      const rdx = dx - 2 * dot * hitNormalX;
-      const rdy = dy - 2 * dot * hitNormalY;
+      let rdx = dx - 2 * dot * hitNormalX;
+      let rdy = dy - 2 * dot * hitNormalY;
+
+      // English effect on cushion: sidespin imparts lateral tangential velocity
+      if (Math.abs(spinX) > 0.05) {
+        const tangentX = -hitNormalY;
+        const tangentY = hitNormalX;
+        rdx += tangentX * spinX * 0.35;
+        rdy += tangentY * spinX * 0.35;
+        const len = Math.sqrt(rdx * rdx + rdy * rdy) || 1;
+        rdx /= len;
+        rdy /= len;
+      }
+
       reflectedPoint = {
         x: hitPoint.x + rdx * 120,
         y: hitPoint.y + rdy * 120,

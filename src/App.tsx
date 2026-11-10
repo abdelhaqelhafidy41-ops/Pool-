@@ -202,6 +202,12 @@ export default function App() {
   const localTransportRef = useRef<LocalTransport | null>(null);
   const inboundLanPacketRef = useRef<((packet: NetworkPacket, asHost: boolean) => void) | null>(null);
   const lastAimBroadcastRef = useRef<number>(0);
+  const lastAimValuesRef = useRef<{ angle: number; power: number; spinX: number; spinY: number }>({
+    angle: 0,
+    power: 0,
+    spinX: 0,
+    spinY: 0,
+  });
 
   // Turn authorization (Host is p1 index 0, Client is p2 index 1)
   const isMyTurn = !isLanMatch || (isLanHost ? activePlayerIndex === 0 : activePlayerIndex === 1);
@@ -210,8 +216,14 @@ export default function App() {
   const broadcastAim = useCallback((angle: number, power: number, currentSpin: Vector2D) => {
     if (!isLanMatch || !isMyTurn) return;
     const now = Date.now();
-    if (now - lastAimBroadcastRef.current > 30) {
+    const last = lastAimValuesRef.current;
+    const angleDiff = Math.abs(angle - last.angle);
+    const powerDiff = Math.abs(power - last.power);
+    const spinDiff = Math.abs(currentSpin.x - last.spinX) + Math.abs(currentSpin.y - last.spinY);
+
+    if (now - lastAimBroadcastRef.current > 40 && (angleDiff > 0.005 || powerDiff > 0.01 || spinDiff > 0.02)) {
       lastAimBroadcastRef.current = now;
+      lastAimValuesRef.current = { angle, power, spinX: currentSpin.x, spinY: currentSpin.y };
       localTransportRef.current?.send({
         type: 'AIM_UPDATE',
         angle,
@@ -381,7 +393,7 @@ export default function App() {
       ]);
     }
 
-    // In a LAN match, if I am client, send SHOT_INTENT to Host
+    // In a LAN match, if I am client, send SHOT_INTENT to Host AND execute shot optimistically
     if (isLanMatch && !isLanHost) {
       localTransportRef.current?.send({
         type: 'SHOT_INTENT',
@@ -396,6 +408,15 @@ export default function App() {
         spin: shotSpin,
         playerIndex: activePlayerIndex,
       } as any);
+
+      // Optimistic local execution so guest sees immediate ball motion with 0ms delay
+      setBalls(prevBalls => {
+        const cueBall = prevBalls.find(b => b.number === 0);
+        if (cueBall && !cueBall.isPocketed) {
+          physicsEngine.strikeBall(cueBall, angle, power, shotSpin);
+        }
+        return [...prevBalls];
+      });
       setTurnPhase('SIMULATING');
       return;
     }
@@ -750,6 +771,10 @@ export default function App() {
       setTurnPhase('AIMING');
     }
 
+    const finalP1Group = evalResult.assignedGroupPlayer1 || player1.group;
+    const finalP2Group = evalResult.assignedGroupPlayer2 || player2.group;
+    const finalIsOpen = evalResult.assignedGroupPlayer1 ? false : isOpenTable;
+
     // Host sends authoritative turn transition packet to client
     if (isLanMatch && isLanHost) {
       localTransportRef.current?.send({
@@ -762,6 +787,9 @@ export default function App() {
         p1Score: player1.score,
         p2Score: player2.score,
         isGameOver: false,
+        player1Group: finalP1Group,
+        player2Group: finalP2Group,
+        isOpenTable: finalIsOpen,
       } as any);
     }
 
@@ -1093,6 +1121,16 @@ export default function App() {
         const nextIdx = packet.nextPlayerId === player1.id ? 0 : 1;
         setActivePlayerIndex(nextIdx);
 
+        if (packet.player1Group) {
+          setPlayer1(p => ({ ...p, group: packet.player1Group! }));
+        }
+        if (packet.player2Group) {
+          setPlayer2(p => ({ ...p, group: packet.player2Group! }));
+        }
+        if (typeof packet.isOpenTable === 'boolean') {
+          setIsOpenTable(packet.isOpenTable);
+        }
+
         if (packet.awardBallInHand) {
           setTurnPhase('BALL_IN_HAND');
         } else {
@@ -1328,6 +1366,12 @@ export default function App() {
             isMyTurn={isMyTurn}
             viewMode={saveData.viewMode}
             onToggleViewMode={handleToggleViewMode}
+            tableOrientation2D={saveData.tableOrientation2D || 'horizontal'}
+            onToggleTableOrientation2D={() => {
+              const next = saveData.tableOrientation2D === 'vertical' ? 'horizontal' : 'vertical';
+              const updated = StorageManager.setTableOrientation2D(next);
+              setSaveData(updated);
+            }}
             controlMode3D={controlMode3D}
             onToggleControlMode3D={() => setControlMode3D(m => m === 'aim' ? 'orbit' : 'aim')}
             cameraPreset3D={saveData.cameraPreset3D}
@@ -1372,6 +1416,8 @@ export default function App() {
                 balls={balls}
                 aimAngle={aimAngle}
                 cuePower={cuePower}
+                spin={spin}
+                tableOrientation={saveData.tableOrientation2D || 'horizontal'}
                 cueItem={equippedCue}
                 feltTheme={equippedFelt}
                 trailStyle={saveData.trailStyle}
