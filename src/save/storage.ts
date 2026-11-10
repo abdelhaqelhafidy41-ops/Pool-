@@ -808,10 +808,10 @@ export class StorageManager {
       data.currentStreak += 1;
       data.bestStreak = Math.max(data.bestStreak, data.currentStreak);
       data.trophies += 1;
-      data.coins += 150;
+      data.coins += 30; // Friendly match reward
     } else {
       data.currentStreak = 0;
-      data.coins += 25;
+      data.coins += 10; // Friendly match consolation
     }
 
     // Add match history log

@@ -155,6 +155,7 @@ export default function App() {
   const ballsRef = useRef<Ball[]>([]);
   ballsRef.current = balls;
   const evalScheduledRef = useRef<boolean>(false);
+  const isGameOverHandledRef = useRef<boolean>(false);
   const [practiceSnapshots, setPracticeSnapshots] = useState<BallSnapshot[]>([]);
 
   // Aiming, Power & Spin (Power strictly starts at 0% and only changes when pulling the cue)
@@ -309,6 +310,8 @@ export default function App() {
         const deductResult = StorageManager.deductMatchStake(stake);
         if (!deductResult.success) {
           soundFX.playFoulSound();
+          setStatusMessage('Not enough coins to place this wager!');
+          setStatusMessageAr('رصيدك من العملات لا يكفي لهذا الرهان!');
           return;
         }
         setSaveData(deductResult.data);
@@ -321,6 +324,7 @@ export default function App() {
       setStatusMessage('');
       setStatusMessageAr('');
       evalScheduledRef.current = false;
+      isGameOverHandledRef.current = false;
 
       const p1: Player = {
         id: 'p1',
@@ -648,6 +652,10 @@ export default function App() {
 
     // Check Game Over
     if (evalResult.isGameOver) {
+      if (isGameOverHandledRef.current) return;
+      isGameOverHandledRef.current = true;
+      setTurnPhase('EVALUATING');
+
       const winner = evalResult.winnerPlayerId === player1.id ? player1 : player2;
       setMatchWinner(winner);
       setWinReason(evalResult.winReason || '');
@@ -662,6 +670,10 @@ export default function App() {
       let earned = 0;
 
       if (matchStake > 0) {
+        // Strict match wager settlement:
+        // Entry stake was already deducted upon starting the match.
+        // If human won: awarded stake * 2 (the full doubled pot: net +stake).
+        // If human lost: 0 returned (wager lost completely, no refund: net -stake).
         const settle = StorageManager.settleMatchStake(isHumanWin, matchStake, {
           mode: modeLabel,
           modeAr: modeLabelAr,
@@ -673,6 +685,7 @@ export default function App() {
         updated = settle.updated;
         earned = settle.netCoinsChange;
       } else {
+        // Free friendly match (no wager)
         updated = StorageManager.recordGameResult(isHumanWin, {
           mode: modeLabel,
           modeAr: modeLabelAr,
@@ -681,7 +694,7 @@ export default function App() {
           fouls: foulsInMatchRef.current,
           scratches: scratchesInMatchRef.current,
         });
-        earned = isHumanWin ? 50 : 15;
+        earned = isHumanWin ? 30 : 10;
       }
 
       setCoinsEarned(earned);
@@ -693,10 +706,12 @@ export default function App() {
         }
       }
 
-      if (_currentTournamentMatch) {
+      // Tournament bracket match only (strictly when matchStake is 0 and _currentTournamentMatch is active)
+      if (matchStake === 0 && _currentTournamentMatch) {
         const isChampionship = _currentTournamentMatch.round === 3;
+        const currentMatchId = _currentTournamentMatch.id;
         const updatedTourney = tournamentMatches.map(m => {
-          if (m.id === _currentTournamentMatch.id) {
+          if (m.id === currentMatchId) {
             return {
               ...m,
               winner,
@@ -713,10 +728,12 @@ export default function App() {
         if (isHumanWin && isChampionship) {
           updated.trophies = (updated.trophies || 0) + 1;
           updated.coins = (updated.coins || 0) + 500;
+          earned = 500;
           setCoinsEarned(500);
           setWinReason('Grand Tournament Champion! You won the Trophy and 500 Coins!');
           setWinReasonAr('بطل مسيرة البطولات! فزت بكأس البطولة و500 عملة ذهبية!');
         }
+        setCurrentTournamentMatch(null);
       }
 
       if (isLanMatch && isLanHost) {
@@ -736,6 +753,7 @@ export default function App() {
         } as any);
       }
 
+      StorageManager.save(updated);
       setSaveData(updated);
 
       if (isHumanWin) soundFX.playVictoryChime();
@@ -1465,8 +1483,16 @@ export default function App() {
       {currentScreen === 'PAUSED' && (
         <PauseModal
           onResume={() => setCurrentScreen('PLAYING')}
-          onRestart={() => startNewGame(gameMode, player2.isAI, player2.aiDifficulty, undefined, matchStake)}
-          onQuitToTitle={() => setCurrentScreen('TITLE')}
+          onRestart={() => {
+            const canAffordStake = matchStake > 0 && saveData.coins >= matchStake;
+            const nextStake = canAffordStake ? matchStake : 0;
+            startNewGame(gameMode, player2.isAI, player2.aiDifficulty, undefined, nextStake);
+          }}
+          onQuitToTitle={() => {
+            setMatchStake(0);
+            setCurrentTournamentMatch(null);
+            setCurrentScreen('TITLE');
+          }}
           soundEnabled={saveData.soundEnabled}
           onToggleSound={handleToggleSound}
           onOpenSettings={() => {
@@ -1486,6 +1512,8 @@ export default function App() {
           winReason={winReason}
           winReasonAr={winReasonAr}
           coinsEarned={coinsEarned}
+          matchStake={matchStake}
+          currentBalance={saveData.coins}
           isTournament={Boolean(_currentTournamentMatch)}
           onContinueTournament={() => {
             setCurrentScreen('TOURNAMENT');
@@ -1493,10 +1521,13 @@ export default function App() {
           }}
           onPlayAgain={() => {
             setCurrentTournamentMatch(null);
-            startNewGame(gameMode, player2.isAI, player2.aiDifficulty, undefined, matchStake);
+            const canAffordStake = matchStake > 0 && saveData.coins >= matchStake;
+            const nextStake = canAffordStake ? matchStake : 0;
+            startNewGame(gameMode, player2.isAI, player2.aiDifficulty, undefined, nextStake);
           }}
           onQuitToTitle={() => {
             setCurrentTournamentMatch(null);
+            setMatchStake(0);
             setCurrentScreen('TITLE');
           }}
           language={language}
