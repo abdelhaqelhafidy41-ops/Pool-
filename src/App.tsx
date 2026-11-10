@@ -28,6 +28,7 @@ import { BilliardsAI } from './ai/billiardsAI';
 import { TournamentEngine } from './tournaments/tournamentEngine';
 import { soundFX } from './audio/soundFX';
 import { LocalTransport } from './network/localTransport';
+import { DirectP2PTransport } from './network/directP2P';
 import { MatchRounds, NetworkPacket } from './types/network';
 
 import { TitleScreen } from './ui/TitleScreen';
@@ -1155,6 +1156,14 @@ export default function App() {
           setTurnPhase('AIMING');
         }
         setShotClock(35);
+      } else if (packet.type === 'TOURNAMENT_SYNC') {
+        if (packet.matches && packet.matches.length > 0) {
+          setTournamentMatches(packet.matches);
+        }
+        if (packet.champion) {
+          setStatusMessage(`Tournament Champion: ${packet.champion.name}!`);
+          setStatusMessageAr(`بطل بطولة Wi-Fi: ${packet.champion.name}!`);
+        }
       }
     }
   }, [balls, gameMode, ruleVariant, lanRounds, player1, player2, isMyTurn, activePlayerIndex, handlePlaceBallInHand]);

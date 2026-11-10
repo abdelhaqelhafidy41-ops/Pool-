@@ -74,6 +74,93 @@ export class TournamentEngine {
   }
 
   /**
+   * Initializes a 2-Player Local Wi-Fi Championship (Head-to-head title series, Best of 3 or 5).
+   */
+  public static create2PlayerWifiChampionship(
+    player1: Player,
+    player2: Player,
+    targetFrames: number = 3
+  ): TournamentMatch[] {
+    const finalMatch: TournamentMatch = {
+      id: 'wifi_2p_final',
+      round: 1,
+      player1: { ...player1 },
+      player2: { ...player2 },
+      winner: null,
+      isCompleted: false,
+      score: '0 - 0',
+    };
+    return [finalMatch];
+  }
+
+  /**
+   * Initializes a 4-Player Local Wi-Fi Tournament:
+   * Semifinal 1 (SF1)
+   * Semifinal 2 (SF2)
+   * Grand Final (GF)
+   */
+  public static create4PlayerWifiTournament(
+    player1: Player,
+    player2: Player,
+    contender3Name: string = 'اللاعب 3 (Local)',
+    contender4Name: string = 'اللاعب 4 (Local)'
+  ): TournamentMatch[] {
+    const p3: Player = {
+      id: 'tourney_p3',
+      name: contender3Name,
+      nameAr: contender3Name,
+      isAI: false,
+      group: 'undetermined',
+      score: 0,
+      avatarSeed: 'p3_falcon',
+      cueId: 'cue_midnight_graphite',
+    };
+
+    const p4: Player = {
+      id: 'tourney_p4',
+      name: contender4Name,
+      nameAr: contender4Name,
+      isAI: false,
+      group: 'undetermined',
+      score: 0,
+      avatarSeed: 'p4_sniper',
+      cueId: 'cue_emerald_dragon',
+    };
+
+    const sf1: TournamentMatch = {
+      id: 'wifi_4p_sf1',
+      round: 1,
+      player1: { ...player1 },
+      player2: { ...player2 },
+      winner: null,
+      isCompleted: false,
+      score: '0 - 0',
+    };
+
+    const sf2: TournamentMatch = {
+      id: 'wifi_4p_sf2',
+      round: 1,
+      player1: p3,
+      player2: p4,
+      winner: null,
+      isCompleted: false,
+      score: '0 - 0',
+    };
+
+    const finalMatch: TournamentMatch = {
+      id: 'wifi_4p_final',
+      round: 2,
+      player1: { ...player1, name: 'فائز SF1 (TBD)', nameAr: 'فائز نصف النهائي 1' },
+      player2: { ...player2, name: 'فائز SF2 (TBD)', nameAr: 'فائز نصف النهائي 2' },
+      winner: null,
+      isCompleted: false,
+      score: '0 - 0',
+    };
+
+    return [sf1, sf2, finalMatch];
+  }
+
+  /**
    * Simulates non-human matches in a round with skill authority ensuring escalating challenges.
    */
   public static simulateOtherMatches(matches: TournamentMatch[]): TournamentMatch[] {

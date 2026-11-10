@@ -43,7 +43,8 @@ export type PacketType =
   | 'TIME_SYNC'
   | 'HEARTBEAT'
   | 'HEARTBEAT_ACK'
-  | 'LEAVE_ROOM';
+  | 'LEAVE_ROOM'
+  | 'TOURNAMENT_SYNC';
 
 export interface BasePacket {
   type: PacketType;
@@ -161,6 +162,15 @@ export interface TimeSyncPacket extends BasePacket {
   activePlayerIndex: number;
 }
 
+export interface TournamentSyncPacket extends BasePacket {
+  type: 'TOURNAMENT_SYNC';
+  tournamentType: '2p' | '4p';
+  stage: 'semifinals' | 'final' | 'completed';
+  matches: any[];
+  activeMatchId: string;
+  champion?: Player | null;
+}
+
 export interface LeaveRoomPacket extends BasePacket {
   type: 'LEAVE_ROOM';
   reason?: string;
@@ -181,4 +191,5 @@ export type NetworkPacket =
   | TimeSyncPacket
   | HeartbeatPacket
   | HeartbeatAckPacket
-  | LeaveRoomPacket;
+  | LeaveRoomPacket
+  | TournamentSyncPacket;

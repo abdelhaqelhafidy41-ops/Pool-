@@ -279,21 +279,24 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             </div>
           </button>
 
-          {/* Pass & Play (Local 2 Players on same screen with optional Wager) */}
+          {/* Offline Local Wi-Fi Multiplayer (Replaces single-screen pass & play) */}
           <button
             onClick={() => {
               soundFX.playButtonClick();
-              setStakeTarget({ mode: '8ball', isVsAI: false });
+              onOpenLanLobby();
             }}
-            className="group px-5 py-3.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 hover:border-emerald-500 text-white font-bold text-sm shadow-md transition-all hover:scale-[1.02] active:scale-[0.98] text-center"
+            className="group px-5 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-900/60 to-slate-900/90 hover:from-emerald-800/80 hover:to-slate-800 border border-emerald-600/70 hover:border-emerald-400 text-white font-bold text-sm shadow-md transition-all hover:scale-[1.02] active:scale-[0.98] text-center"
           >
-            <div className="text-base">👥 {isRTL ? 'لعب محلي (شاشة واحدة)' : 'Pass & Play'}</div>
-            <div className="text-[11px] font-normal text-slate-400 mt-0.5">
-              {isRTL ? 'لاعبان مع رهان أو ودي' : '2 Players Stake or Free'}
+            <div className="text-base flex items-center justify-center gap-1.5">
+              <span>📡</span>
+              <span>{isRTL ? 'لعب محلي Wi-Fi (أوفلاين)' : 'Local Wi-Fi (Offline)'}</span>
+            </div>
+            <div className="text-[11px] font-normal text-emerald-300/80 mt-0.5">
+              {isRTL ? 'مباشر بين الجهازين بدون طرف ثالث' : 'Direct P2P · Zero Internet'}
             </div>
           </button>
 
-          {/* Local Tournament */}
+          {/* Local Tournament (2 or 4 Players Wi-Fi & Solo Cups) */}
           <button
             onClick={() => {
               soundFX.playButtonClick();
@@ -301,9 +304,9 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             }}
             className="px-5 py-3 rounded-2xl bg-slate-900/80 hover:bg-slate-800/90 border border-slate-800 hover:border-amber-500 text-slate-200 text-sm font-semibold transition-all hover:scale-[1.02] active:scale-[0.98] text-center"
           >
-            <div className="text-base">🏆 {isRTL ? 'البطولة المحلية (8 لاعبين)' : 'Tournament (8 Players)'}</div>
-            <div className="text-[11px] font-normal text-slate-400 mt-0.5">
-              {isRTL ? '3 كؤوس تدريجية' : '3 Persistent Cups'}
+            <div className="text-base">🏆 {isRTL ? 'البطولة المحلية (2 أو 4 لاعبين)' : 'Tournament (2P / 4P / Cups)'}</div>
+            <div className="text-[11px] font-normal text-amber-400/80 mt-0.5">
+              {isRTL ? 'بطولة Wi-Fi أوفلاين أو كؤوس فردية' : 'Offline Wi-Fi & Solo Cups'}
             </div>
           </button>
 

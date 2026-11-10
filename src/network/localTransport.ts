@@ -11,6 +11,7 @@ import {
   MatchRounds,
   NetworkPacket,
 } from '../types/network';
+import { DirectP2PTransport } from './directP2P';
 
 export interface TransportEvents {
   onStateChange: (state: LocalLobbyState, detail?: string) => void;
@@ -40,6 +41,9 @@ export class LocalTransport {
   private mqttClient: MqttClient | null = null;
   private discoveryMqttClient: MqttClient | null = null;
   private roomTopic: string = '';
+
+  // Direct Device-to-Device WebRTC DataChannel (0 server, 0 internet, pure offline Wi-Fi P2P)
+  private directP2P: DirectP2PTransport | null = null;
 
   // Local BroadcastChannel fallback (same device / multi-tab)
   private discoveryChannel: BroadcastChannel | null = null;
@@ -379,6 +383,18 @@ export class LocalTransport {
     return true;
   }
 
+  // 3b. Attach Direct Offline P2P Transport (Zero server, device-to-device)
+  public attachDirectP2P(p2p: DirectP2PTransport, roomCode: string, isHost: boolean, localPlayerId: string): void {
+    this.cleanup();
+    this.directP2P = p2p;
+    this.currentRoomCode = roomCode;
+    this.isHost = isHost;
+    this.localPlayerId = localPlayerId;
+    this.sequenceCounter = 0;
+    this.seenSequences.clear();
+    this.setState('CONNECTED', 'تم الاتصال المباشر بين الجهازين أوفلاين');
+  }
+
   // 4. Send Packet
   public send(packet: NetworkPacket): void {
     packet.roomCode = this.currentRoomCode;
@@ -387,6 +403,11 @@ export class LocalTransport {
     (packet as any).instanceId = this.instanceId;
     packet.sequence = ++this.sequenceCounter;
     packet.timestamp = Date.now();
+
+    // 0. Direct Device-to-Device P2P (Pure Offline Wi-Fi without server)
+    if (this.directP2P && this.directP2P.getIsConnected()) {
+      this.directP2P.send(packet);
+    }
 
     const payload = JSON.stringify(packet);
 
@@ -595,6 +616,13 @@ export class LocalTransport {
         this.roomChannel.close();
       } catch {}
       this.roomChannel = null;
+    }
+
+    if (this.directP2P) {
+      try {
+        this.directP2P.cleanup();
+      } catch {}
+      this.directP2P = null;
     }
 
     this.currentRoomCode = '';
