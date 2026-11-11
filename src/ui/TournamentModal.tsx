@@ -217,7 +217,9 @@ export const TournamentModal: React.FC<TournamentModalProps> = ({
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
               <span className="font-semibold text-emerald-300">
-                {isRTL ? 'غرفة بطولة Wi-Fi المحلية نشطة:' : 'Local Wi-Fi Room Active:'}
+                {isWifiHost
+                  ? (isRTL ? 'غرفة بطولة Wi-Fi المحلية نشطة:' : 'Local Wi-Fi Room Active:')
+                  : (isRTL ? 'أنت في غرفة البطولة كضيف:' : 'Joined Tournament Room as Guest:')}
               </span>
               <span className="font-mono font-black text-white bg-slate-900 px-2.5 py-0.5 rounded-lg border border-emerald-500/50 text-sm">
                 {wifiRoomCode}
@@ -230,16 +232,23 @@ export const TournamentModal: React.FC<TournamentModalProps> = ({
               </button>
             </div>
 
-            {onFillWifiSlotsWithAI && isWifiHost && (
-              <button
-                onClick={() => {
-                  soundFX.playButtonClick();
-                  onFillWifiSlotsWithAI();
-                }}
-                className="px-3 py-1 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow transition-all"
-              >
-                ⚡ {isRTL ? 'ملء المقاعد بالذكاء الاصطناعي وبدء البطولة' : 'Auto-Fill with AI & Start'}
-              </button>
+            {isWifiHost ? (
+              onFillWifiSlotsWithAI && (
+                <button
+                  onClick={() => {
+                    soundFX.playButtonClick();
+                    onFillWifiSlotsWithAI();
+                  }}
+                  className="px-3 py-1 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow transition-all"
+                >
+                  ⚡ {isRTL ? 'ملء المقاعد بالذكاء الاصطناعي وبدء البطولة' : 'Auto-Fill with AI & Start'}
+                </button>
+              )
+            ) : (
+              <span className="text-amber-300 font-semibold text-xs flex items-center gap-1.5 bg-amber-500/10 px-2.5 py-1 rounded-xl border border-amber-500/30">
+                <span className="animate-spin text-sm">⏳</span>
+                <span>{isRTL ? 'بانتظار أن يبدأ صاحب الغرفة المباراة...' : 'Waiting for host to start...'}</span>
+              </span>
             )}
           </div>
         )}
@@ -545,7 +554,16 @@ export const TournamentModal: React.FC<TournamentModalProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
-              {userNextMatch ? (
+              {wifiRoomCode && !isWifiHost ? (
+                <div className="px-5 py-2.5 rounded-xl bg-slate-800/90 border border-amber-500/40 text-amber-300 font-bold text-xs flex items-center gap-2 shadow">
+                  <span className="animate-spin text-sm">⏳</span>
+                  <span>
+                    {isRTL
+                      ? 'بانتظار صاحب الغرفة لبدء المباراة... (ستدخل تلقائياً)'
+                      : 'Waiting for host to start match (auto-entering)...'}
+                  </span>
+                </div>
+              ) : userNextMatch ? (
                 <button
                   onClick={() => {
                     soundFX.playButtonClick();

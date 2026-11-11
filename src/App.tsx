@@ -214,10 +214,13 @@ export default function App() {
     spinY: 0,
   });
 
+  const currentScreenRef = useRef<GameStateScreen>(currentScreen);
+  currentScreenRef.current = currentScreen;
+
   // Turn authorization (Host is p1 index 0, Client is p2 index 1)
   const isMyTurn = !isLanMatch || (isLanHost ? activePlayerIndex === 0 : activePlayerIndex === 1);
 
-  // Throttled Aim/Power/Spin Broadcast for real-time LAN sync
+  // High-frequency Aim/Power/Spin Broadcast for instant zero-lag real-time sync (50Hz)
   const broadcastAim = useCallback((angle: number, power: number, currentSpin: Vector2D) => {
     if (!isLanMatch || !isMyTurn) return;
     const now = Date.now();
@@ -226,7 +229,7 @@ export default function App() {
     const powerDiff = Math.abs(power - last.power);
     const spinDiff = Math.abs(currentSpin.x - last.spinX) + Math.abs(currentSpin.y - last.spinY);
 
-    if (now - lastAimBroadcastRef.current > 40 && (angleDiff > 0.005 || powerDiff > 0.01 || spinDiff > 0.02)) {
+    if (now - lastAimBroadcastRef.current > 20 && (angleDiff > 0.003 || powerDiff > 0.005 || spinDiff > 0.01)) {
       lastAimBroadcastRef.current = now;
       lastAimValuesRef.current = { angle, power, spinX: currentSpin.x, spinY: currentSpin.y };
       localTransportRef.current?.send({
@@ -785,7 +788,7 @@ export default function App() {
           awardBallInHand: false,
           message: evalResult.winReason || 'Match Over',
           messageAr: evalResult.winReasonAr || 'انتهت المباراة',
-          balls: balls,
+          balls: currentBalls,
           p1Score: player1.score,
           p2Score: player2.score,
           isGameOver: true,
@@ -835,7 +838,7 @@ export default function App() {
     const finalP2Group = evalResult.assignedGroupPlayer2 || player2.group;
     const finalIsOpen = evalResult.assignedGroupPlayer1 ? false : isOpenTable;
 
-    // Host sends authoritative turn transition packet to client
+    // Host sends authoritative turn transition packet to client with current balls
     if (isLanMatch && isLanHost) {
       localTransportRef.current?.send({
         type: 'TURN_RESULT',
@@ -843,7 +846,7 @@ export default function App() {
         awardBallInHand: shotReportRef.current.cueBallPocketed,
         message: evalResult.message,
         messageAr: evalResult.messageAr,
-        balls: balls,
+        balls: currentBalls,
         p1Score: player1.score,
         p2Score: player2.score,
         isGameOver: false,
@@ -855,6 +858,76 @@ export default function App() {
 
     setShotClock(35);
   }, [activePlayerIndex, balls, gameMode, isOpenTable, isBreakShot, player1, player2, isLanMatch, isLanHost]);
+
+  // Handle opponent forfeit / withdrawal / disconnection during an active match
+  const handleOpponentForfeit = useCallback((opponentName?: string) => {
+    // Local player is awarded the victory
+    const winner = player1;
+    setMatchWinner(winner);
+    const forfeitMsg = `Opponent (${opponentName || 'Player'}) forfeited. Victory awarded!`;
+    const forfeitMsgAr = `انسحب الخصم (${opponentName || 'اللاعب'}) من المباراة! تم احتساب الفوز لك والتأهل للمرحلة التالية 🏆`;
+    setWinReason(forfeitMsg);
+    setWinReasonAr(forfeitMsgAr);
+    soundFX.playVictoryChime();
+
+    let updated = { ...saveData };
+    let earned = 100;
+
+    // Settle tournament match if active
+    if (isTournamentMatchActive || _currentTournamentMatch) {
+      const activeMatch = _currentTournamentMatch || tournamentMatches.find(m => !m.isCompleted);
+      const isChampionship = activeMatch ? (
+        activeMatch.round === (tournamentMatches.length === 3 ? 2 : 3) || activeMatch.id.includes('final')
+      ) : false;
+      const isSemifinal = activeMatch ? (
+        activeMatch.round === 1 && (tournamentMatches.length === 3 || activeMatch.id.includes('sf'))
+      ) : false;
+
+      const updatedTourney = tournamentMatches.map(m => {
+        if (m.id === activeMatch?.id) {
+          return {
+            ...m,
+            winner,
+            isCompleted: true,
+            score: '2 - 0 (انسحاب)',
+          };
+        }
+        return m;
+      });
+
+      const simulated = TournamentEngine.simulateOtherMatches(updatedTourney);
+      setTournamentMatches(simulated);
+      StorageManager.saveTournamentCareer(simulated);
+
+      if (isChampionship) {
+        updated.trophies = (updated.trophies || 0) + 1;
+        updated.coins = (updated.coins || 0) + 1500;
+        earned = 1500;
+        setLastTournamentStage('final_won');
+      } else if (isSemifinal) {
+        updated.coins = (updated.coins || 0) + 100;
+        earned = 100;
+        setLastTournamentStage('semifinal_won');
+      }
+      setIsTournamentMatchActive(true);
+    } else {
+      updated = StorageManager.recordGameResult(true, {
+        mode: gameMode,
+        modeAr: gameMode === '9ball' ? 'كرة 9' : 'كرة 8',
+        opponent: player2.name,
+        score: 'فوز بالانسحاب',
+        fouls: 0,
+        scratches: 0,
+      });
+      earned = 50;
+    }
+
+    setCoinsEarned(earned);
+    StorageManager.save(updated);
+    setSaveData(updated);
+
+    setCurrentScreen('GAME_OVER');
+  }, [player1, player2, saveData, isTournamentMatchActive, _currentTournamentMatch, tournamentMatches, gameMode]);
 
   // AI Turn Handling - Fast, Smooth, Reliable and Non-Blocking
   const aiTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -1032,6 +1105,28 @@ export default function App() {
     };
     setPlayer1(match.player1);
     setPlayer2(opponent);
+
+    // If hosting a Wi-Fi tournament match, broadcast authoritative MATCH_START so guest enters match simultaneously!
+    if (isLanMatch && isLanHost) {
+      const initBalls = rules8Ball.current.initializeBalls();
+      setBalls(initBalls);
+      ballsRef.current = initBalls;
+      localTransportRef.current?.send({
+        type: 'MATCH_START',
+        initialBalls: initBalls,
+        mode: '8ball',
+        ruleVariant: 'wpa_official',
+        rounds: lanRounds,
+        player1: match.player1,
+        player2: opponent,
+        isTournament: true,
+        tournamentMatchId: match.id,
+      } as any);
+      startNewGame('8ball', match.player2.isAI, roundDifficulty, opponent);
+      setCurrentScreen('PLAYING');
+      return;
+    }
+
     startNewGame('8ball', true, roundDifficulty, opponent);
   };
 

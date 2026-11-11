@@ -25,6 +25,7 @@ export interface DiscoveredRoom {
   ruleVariant: RuleVariant;
   rounds: MatchRounds;
   lastSeenTimestamp: number;
+  isTournament?: boolean;
 }
 
 // Network Packets (Host-Authoritative Model)
@@ -44,7 +45,8 @@ export type PacketType =
   | 'HEARTBEAT'
   | 'HEARTBEAT_ACK'
   | 'LEAVE_ROOM'
-  | 'TOURNAMENT_SYNC';
+  | 'TOURNAMENT_SYNC'
+  | 'PLAYER_FORFEIT';
 
 export interface BasePacket {
   type: PacketType;
@@ -61,6 +63,7 @@ export interface BeaconPacket extends BasePacket {
   mode: GameMode;
   ruleVariant: RuleVariant;
   rounds: MatchRounds;
+  isTournament?: boolean;
 }
 
 export interface JoinRequestPacket extends BasePacket {
@@ -75,6 +78,8 @@ export interface JoinAcceptPacket extends BasePacket {
   mode: GameMode;
   ruleVariant: RuleVariant;
   rounds: MatchRounds;
+  isTournament?: boolean;
+  matches?: any[];
 }
 
 export interface JoinRejectPacket extends BasePacket {
@@ -176,6 +181,15 @@ export interface LeaveRoomPacket extends BasePacket {
   reason?: string;
 }
 
+export interface PlayerForfeitPacket extends BasePacket {
+  type: 'PLAYER_FORFEIT';
+  playerId: string;
+  playerName: string;
+  reason?: string;
+  message?: string;
+  messageAr?: string;
+}
+
 export type NetworkPacket =
   | BeaconPacket
   | JoinRequestPacket
@@ -192,4 +206,5 @@ export type NetworkPacket =
   | HeartbeatPacket
   | HeartbeatAckPacket
   | LeaveRoomPacket
-  | TournamentSyncPacket;
+  | TournamentSyncPacket
+  | PlayerForfeitPacket;

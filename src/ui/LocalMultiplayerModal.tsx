@@ -20,7 +20,7 @@ interface LocalMultiplayerModalProps {
     isTournament?: boolean;
     tournamentType?: '2p' | '4p';
   }) => void;
-  onJoinLanRoom: (roomCode: string) => void;
+  onJoinLanRoom: (roomCode: string, isTournament?: boolean) => void;
   onStartHotSeat: (mode: GameMode, variant: RuleVariant) => void;
   onClose: () => void;
   language: Language;
@@ -130,10 +130,13 @@ export const LocalMultiplayerModal: React.FC<LocalMultiplayerModalProps> = ({
     });
   };
 
-  const handleJoin = (codeToJoin: string) => {
+  const handleJoin = (codeToJoin: string, isTournament?: boolean) => {
     if (!codeToJoin.trim()) return;
     soundFX.playButtonClick();
-    onJoinLanRoom(codeToJoin.trim().toUpperCase());
+    const isTourney = typeof isTournament === 'boolean'
+      ? isTournament
+      : (activeTab === 'tournaments' || codeToJoin.toUpperCase().startsWith('CUP'));
+    onJoinLanRoom(codeToJoin.trim().toUpperCase(), isTourney);
   };
 
   const generateNewCode = () => {
@@ -385,7 +388,7 @@ export const LocalMultiplayerModal: React.FC<LocalMultiplayerModalProps> = ({
                     {isRTL ? 'لصق' : 'Paste'}
                   </button>
                   <button
-                    onClick={() => handleJoin(manualCode)}
+                    onClick={() => handleJoin(manualCode, true)}
                     disabled={!manualCode.trim()}
                     className="px-5 py-2.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white rounded-xl text-xs font-bold uppercase transition-all active:scale-95"
                   >
@@ -583,10 +586,15 @@ export const LocalMultiplayerModal: React.FC<LocalMultiplayerModalProps> = ({
                       <span className="text-[10px] text-slate-400">
                         ({room.mode === '8ball' ? '8-Ball' : '9-Ball'})
                       </span>
+                      {(room.isTournament || room.roomCode.startsWith('CUP')) && (
+                        <span className="px-1.5 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-bold">
+                          {isRTL ? 'بطولة' : 'Cup'}
+                        </span>
+                      )}
                     </div>
 
                     <button
-                      onClick={() => handleJoin(room.roomCode)}
+                      onClick={() => handleJoin(room.roomCode, Boolean(room.isTournament || room.roomCode.startsWith('CUP')))}
                       className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-transform active:scale-95"
                     >
                       {isRTL ? 'انضمام' : 'Join'}

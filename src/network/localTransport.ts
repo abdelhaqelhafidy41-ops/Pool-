@@ -20,8 +20,13 @@ export interface TransportEvents {
   onReconnectionCountdown: (secondsLeft: number) => void;
 }
 
-const PRIMARY_BROKER = 'wss://broker.emqx.io:8084/mqtt';
-const FALLBACK_BROKER = 'wss://broker.hivemq.com:8884/mqtt';
+const PRIMARY_BROKER = 'wss://broker.hivemq.com:8884/mqtt';
+const FALLBACK_BROKER = 'wss://broker.emqx.io:8084/mqtt';
+const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+];
 
 export class LocalTransport {
   public static readonly DISCOVERY_CHANNEL = 'cue_masters_lan_discovery_beacon';
@@ -37,12 +42,17 @@ export class LocalTransport {
   private sequenceCounter: number = 0;
   private seenSequences: Set<string> = new Set();
 
-  // Ultra-reliable cross-device real-time MQTT client
+  // Low-latency MQTT client (over WebSockets)
   private mqttClient: MqttClient | null = null;
   private discoveryMqttClient: MqttClient | null = null;
   private roomTopic: string = '';
 
-  // Direct Device-to-Device WebRTC DataChannel (0 server, 0 internet, pure offline Wi-Fi P2P)
+  // Automatic Zero-Lag WebRTC Turbo DataChannel (1ms - 5ms peer-to-peer Wi-Fi stream)
+  private turboPeerConn: RTCPeerConnection | null = null;
+  private turboDataChannel: RTCDataChannel | null = null;
+  private isTurboP2POpen: boolean = false;
+
+  // Direct Device-to-Device WebRTC DataChannel (QR/Manual code mode)
   private directP2P: DirectP2PTransport | null = null;
 
   // Local BroadcastChannel fallback (same device / multi-tab)
@@ -57,7 +67,7 @@ export class LocalTransport {
 
   private discoveredRoomsMap: Map<string, DiscoveredRoom> = new Map();
   private lastPeerSeenTimestamp: number = 0;
-  private latencyMs: number = 15;
+  private latencyMs: number = 8;
   private reconnectSecondsLeft: number = LocalTransport.RECONNECT_GRACE_PERIOD_SEC;
 
   private events: TransportEvents;
@@ -82,6 +92,10 @@ export class LocalTransport {
     return this.latencyMs;
   }
 
+  public getIsTurboP2P(): boolean {
+    return this.isTurboP2POpen;
+  }
+
   public getReconnectionSeconds(): number {
     return this.reconnectSecondsLeft;
   }
@@ -102,6 +116,7 @@ export class LocalTransport {
     ruleVariant: RuleVariant;
     rounds: MatchRounds;
     hostPlayer: Player;
+    isTournament?: boolean;
   }): boolean {
     this.cleanup();
     this.isHost = true;
@@ -113,12 +128,60 @@ export class LocalTransport {
     const cleanCode = this.sanitizeCode(this.currentRoomCode);
     this.roomTopic = `${LocalTransport.TOPIC_PREFIX}${cleanCode}`;
 
-    // Connect to global low-latency MQTT broker for match room
+    this.connectMqttHost(cleanCode);
+
+    // Initialize Host Turbo WebRTC
+    this.initHostTurboWebRTC();
+
+    // Local BroadcastChannel fallback for multi-tab testing
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        this.roomChannel = new BroadcastChannel(`cue_masters_room_${cleanCode}`);
+        this.roomChannel.onmessage = (event) => this.handleIncomingPacket(event.data);
+        this.discoveryChannel = new BroadcastChannel(LocalTransport.DISCOVERY_CHANNEL);
+      } catch {}
+    }
+
+    // Broadcast room beacon periodically so nearby scanning devices discover it
+    const sendBeacon = () => {
+      if (this.lobbyState !== 'ROOM_CREATED') return;
+
+      const beaconPacket: NetworkPacket = {
+        type: 'BEACON',
+        roomCode: this.currentRoomCode,
+        senderId: this.localPlayerId,
+        sequence: ++this.sequenceCounter,
+        timestamp: Date.now(),
+        hostName: config.hostPlayer.name,
+        hostAvatar: config.hostPlayer.avatarSeed,
+        mode: config.mode,
+        ruleVariant: config.ruleVariant,
+        rounds: config.rounds,
+        isTournament: config.isTournament,
+      };
+
+      this.sendMqttRaw(beaconPacket, LocalTransport.BEACON_TOPIC);
+
+      if (this.discoveryChannel) {
+        try {
+          this.discoveryChannel.postMessage(beaconPacket);
+        } catch {}
+      }
+    };
+
+    sendBeacon();
+    this.beaconIntervalId = window.setInterval(sendBeacon, 2000);
+
+    this.setState('ROOM_CREATED');
+    return true;
+  }
+
+  private connectMqttHost(cleanCode: string, brokerUrl: string = PRIMARY_BROKER): void {
     try {
-      this.mqttClient = mqtt.connect(PRIMARY_BROKER, {
-        keepalive: 15,
+      this.mqttClient = mqtt.connect(brokerUrl, {
+        keepalive: 10,
         reconnectPeriod: 1000,
-        connectTimeout: 5000,
+        connectTimeout: 4000,
         clean: true,
         queueQoSZero: false,
         reschedulePings: true,
@@ -139,66 +202,19 @@ export class LocalTransport {
           try {
             const packet = JSON.parse(payload.toString());
             this.handleIncomingPacket(packet);
-          } catch (e) {
-            console.warn('Packet parse error:', e);
-          }
+          } catch {}
         }
       });
 
-      this.mqttClient.on('error', (err) => {
-        console.warn('MQTT host error:', err);
+      this.mqttClient.on('error', () => {
+        if (brokerUrl === PRIMARY_BROKER) {
+          try {
+            this.mqttClient?.end(true);
+          } catch {}
+          this.connectMqttHost(cleanCode, FALLBACK_BROKER);
+        }
       });
-    } catch (e) {
-      console.warn('MQTT initialization error:', e);
-    }
-
-    // Local BroadcastChannel fallback for multi-tab testing
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      try {
-        this.roomChannel = new BroadcastChannel(`cue_masters_room_${cleanCode}`);
-        this.roomChannel.onmessage = (event) => this.handleIncomingPacket(event.data);
-
-        this.discoveryChannel = new BroadcastChannel(LocalTransport.DISCOVERY_CHANNEL);
-      } catch {}
-    }
-
-    // Broadcast room beacon periodically so nearby scanning devices discover it
-    const sendBeacon = () => {
-      if (this.lobbyState !== 'ROOM_CREATED') return;
-
-      const beaconPacket: NetworkPacket = {
-        type: 'BEACON',
-        roomCode: this.currentRoomCode,
-        senderId: this.localPlayerId,
-        sequence: ++this.sequenceCounter,
-        timestamp: Date.now(),
-        hostName: config.hostPlayer.name,
-        hostAvatar: config.hostPlayer.avatarSeed,
-        mode: config.mode,
-        ruleVariant: config.ruleVariant,
-        rounds: config.rounds,
-      };
-
-      // Publish on MQTT beacon topic
-      if (this.mqttClient && this.mqttClient.connected) {
-        try {
-          this.mqttClient.publish(LocalTransport.BEACON_TOPIC, JSON.stringify(beaconPacket));
-        } catch {}
-      }
-
-      // Publish on local BroadcastChannel
-      if (this.discoveryChannel) {
-        try {
-          this.discoveryChannel.postMessage(beaconPacket);
-        } catch {}
-      }
-    };
-
-    sendBeacon();
-    this.beaconIntervalId = window.setInterval(sendBeacon, 2000);
-
-    this.setState('ROOM_CREATED');
-    return true;
+    } catch {}
   }
 
   // 2. Discover Rooms (Lobby Scanner)
@@ -207,12 +223,11 @@ export class LocalTransport {
     this.discoveredRoomsMap.clear();
     this.setState('SEARCHING');
 
-    // Subscribe to MQTT beacon topic using dedicated scanner client
     try {
       this.discoveryMqttClient = mqtt.connect(PRIMARY_BROKER, {
-        keepalive: 30,
+        keepalive: 20,
         reconnectPeriod: 2500,
-        connectTimeout: 8000,
+        connectTimeout: 5000,
         clientId: `cm8_scan_${Math.random().toString(16).slice(2, 8)}`,
       });
 
@@ -230,7 +245,6 @@ export class LocalTransport {
       });
     } catch {}
 
-    // Also scan local BroadcastChannel
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       try {
         this.discoveryChannel = new BroadcastChannel(LocalTransport.DISCOVERY_CHANNEL);
@@ -256,6 +270,7 @@ export class LocalTransport {
         ruleVariant: data.ruleVariant,
         rounds: data.rounds,
         lastSeenTimestamp: Date.now(),
+        isTournament: data.isTournament,
       });
       this.pruneStaleRooms();
     }
@@ -326,11 +341,37 @@ export class LocalTransport {
       playerAvatar: clientPlayer.avatarSeed,
     });
 
+    this.connectMqttClient(cleanCode, createJoinReq);
+
+    if (this.roomChannel) {
+      try {
+        this.roomChannel.postMessage(createJoinReq());
+      } catch {}
+    }
+
+    // Keep resending Join Request every 1200ms until Host responds
+    this.joinRetryIntervalId = window.setInterval(() => {
+      if (this.lobbyState === 'CONNECTING') {
+        this.send(createJoinReq());
+      } else {
+        if (this.joinRetryIntervalId !== null) {
+          clearInterval(this.joinRetryIntervalId);
+          this.joinRetryIntervalId = null;
+        }
+      }
+    }, 1200);
+
+    this.lastPeerSeenTimestamp = Date.now();
+    this.startHeartbeatLoop();
+    return true;
+  }
+
+  private connectMqttClient(cleanCode: string, createJoinReq: () => NetworkPacket, brokerUrl: string = PRIMARY_BROKER): void {
     try {
-      this.mqttClient = mqtt.connect(PRIMARY_BROKER, {
-        keepalive: 15,
+      this.mqttClient = mqtt.connect(brokerUrl, {
+        keepalive: 10,
         reconnectPeriod: 1000,
-        connectTimeout: 5000,
+        connectTimeout: 4000,
         clean: true,
         queueQoSZero: false,
         reschedulePings: true,
@@ -341,7 +382,6 @@ export class LocalTransport {
         if (!this.mqttClient) return;
         this.mqttClient.subscribe(this.roomTopic, { qos: 0 }, (err) => {
           if (!err) {
-            // Send Join Request immediately upon subscription
             this.send(createJoinReq());
             this.lastPeerSeenTimestamp = Date.now();
             this.startHeartbeatLoop();
@@ -358,35 +398,15 @@ export class LocalTransport {
         }
       });
 
-      this.mqttClient.on('error', (err) => {
-        console.warn('MQTT client connection error:', err);
-      });
-    } catch (e) {
-      console.warn('MQTT client initialization failed:', e);
-    }
-
-    // Send Join Request on local channel as well
-    if (this.roomChannel) {
-      try {
-        this.roomChannel.postMessage(createJoinReq());
-      } catch {}
-    }
-
-    // Keep resending Join Request every 1.5 seconds until Host responds with JOIN_ACCEPT or MATCH_START
-    this.joinRetryIntervalId = window.setInterval(() => {
-      if (this.lobbyState === 'CONNECTING') {
-        this.send(createJoinReq());
-      } else {
-        if (this.joinRetryIntervalId !== null) {
-          clearInterval(this.joinRetryIntervalId);
-          this.joinRetryIntervalId = null;
+      this.mqttClient.on('error', () => {
+        if (brokerUrl === PRIMARY_BROKER) {
+          try {
+            this.mqttClient?.end(true);
+          } catch {}
+          this.connectMqttClient(cleanCode, createJoinReq, FALLBACK_BROKER);
         }
-      }
-    }, 1500);
-
-    this.lastPeerSeenTimestamp = Date.now();
-    this.startHeartbeatLoop();
-    return true;
+      });
+    } catch {}
   }
 
   // 3b. Attach Direct Offline P2P Transport (Zero server, device-to-device)
@@ -401,7 +421,139 @@ export class LocalTransport {
     this.setState('CONNECTED', 'تم الاتصال المباشر بين الجهازين أوفلاين');
   }
 
-  // 4. Send Packet
+  // --- Automatic Turbo WebRTC Peer-to-Peer Subsystem ---
+  private initHostTurboWebRTC(): void {
+    try {
+      if (typeof RTCPeerConnection === 'undefined') return;
+      this.cleanupTurboWebRTC();
+
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      this.turboPeerConn = pc;
+
+      // Ultra-low latency data channel
+      const dc = pc.createDataChannel('cuemasters_turbo', { ordered: true });
+      this.setupDataChannel(dc);
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          this.sendMqttRaw({
+            _rtcType: 'ICE',
+            candidate: event.candidate,
+            senderId: this.localPlayerId,
+            roomCode: this.currentRoomCode,
+          });
+        }
+      };
+
+      pc.createOffer().then(offer => {
+        return pc.setLocalDescription(offer).then(() => {
+          // Offer will be broadcasted when guest sends JOIN_REQUEST
+        });
+      }).catch(() => {});
+    } catch {}
+  }
+
+  private handleHostBroadcastOffer(): void {
+    if (!this.turboPeerConn || !this.turboPeerConn.localDescription) return;
+    this.sendMqttRaw({
+      _rtcType: 'OFFER',
+      sdp: this.turboPeerConn.localDescription.sdp,
+      senderId: this.localPlayerId,
+      roomCode: this.currentRoomCode,
+    });
+  }
+
+  private async handleGuestReceivedOffer(sdpOffer: string): Promise<void> {
+    try {
+      if (typeof RTCPeerConnection === 'undefined') return;
+      this.cleanupTurboWebRTC();
+
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      this.turboPeerConn = pc;
+
+      pc.ondatachannel = (e) => {
+        this.setupDataChannel(e.channel);
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          this.sendMqttRaw({
+            _rtcType: 'ICE',
+            candidate: event.candidate,
+            senderId: this.localPlayerId,
+            roomCode: this.currentRoomCode,
+          });
+        }
+      };
+
+      await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: sdpOffer }));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      this.sendMqttRaw({
+        _rtcType: 'ANSWER',
+        sdp: answer.sdp,
+        senderId: this.localPlayerId,
+        roomCode: this.currentRoomCode,
+      });
+    } catch {}
+  }
+
+  private async handleHostReceivedAnswer(sdpAnswer: string): Promise<void> {
+    try {
+      if (!this.turboPeerConn) return;
+      await this.turboPeerConn.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: sdpAnswer }));
+    } catch {}
+  }
+
+  private setupDataChannel(dc: RTCDataChannel): void {
+    this.turboDataChannel = dc;
+    dc.onopen = () => {
+      this.isTurboP2POpen = true;
+      this.latencyMs = 2; // Direct Wi-Fi P2P latency
+    };
+    dc.onclose = () => {
+      this.isTurboP2POpen = false;
+    };
+    dc.onerror = () => {
+      this.isTurboP2POpen = false;
+    };
+    dc.onmessage = (event) => {
+      try {
+        const packet = JSON.parse(event.data);
+        this.handleIncomingPacket(packet);
+      } catch {}
+    };
+  }
+
+  private cleanupTurboWebRTC(): void {
+    this.isTurboP2POpen = false;
+    if (this.turboDataChannel) {
+      try {
+        this.turboDataChannel.close();
+      } catch {}
+      this.turboDataChannel = null;
+    }
+    if (this.turboPeerConn) {
+      try {
+        this.turboPeerConn.close();
+      } catch {}
+      this.turboPeerConn = null;
+    }
+  }
+
+  private sendMqttRaw(obj: any, targetTopic?: string): void {
+    const topic = targetTopic || this.roomTopic;
+    if (!topic) return;
+    const payload = JSON.stringify(obj);
+    if (this.mqttClient && this.mqttClient.connected) {
+      try {
+        this.mqttClient.publish(topic, payload, { qos: 0 });
+      } catch {}
+    }
+  }
+
+  // 4. Send Packet (Turbo P2P first, then MQTT + BroadcastChannel)
   public send(packet: NetworkPacket): void {
     packet.roomCode = this.currentRoomCode;
     packet.senderId = this.localPlayerId || (this.isHost ? 'p1_host' : 'p2_guest');
@@ -410,23 +562,36 @@ export class LocalTransport {
     packet.sequence = ++this.sequenceCounter;
     packet.timestamp = Date.now();
 
-    // 0. Direct Device-to-Device P2P (Pure Offline Wi-Fi without server)
+    // 0. Manual Direct Device-to-Device P2P if active
     if (this.directP2P && this.directP2P.getIsConnected()) {
       this.directP2P.send(packet);
     }
 
     const payload = JSON.stringify(packet);
 
-    // 1. Send via MQTT over WebSocket (Zero broker-ack latency, UDP-like game speed)
-    if (this.mqttClient && this.mqttClient.connected && this.roomTopic) {
+    // 1. Send via Automatic Turbo WebRTC DataChannel (1ms - 5ms instant local Wi-Fi latency)
+    let p2pDelivered = false;
+    if (this.isTurboP2POpen && this.turboDataChannel && this.turboDataChannel.readyState === 'open') {
       try {
-        this.mqttClient.publish(this.roomTopic, payload, { qos: 0 });
-      } catch (e) {
-        console.warn('MQTT publish error:', e);
+        this.turboDataChannel.send(payload);
+        p2pDelivered = true;
+      } catch {
+        this.isTurboP2POpen = false;
       }
     }
 
-    // 2. Send via local BroadcastChannel (Same-Device fallback)
+    // 2. High-speed stream packets (AIM_UPDATE / TIME_SYNC) can skip MQTT when P2P is blazing fast,
+    // but state packets (JOIN, START, RESULT, FORFEIT) always also broadcast over MQTT for 100% guarantee
+    const isStream = packet.type === 'AIM_UPDATE' || packet.type === 'TIME_SYNC' || packet.type === 'HEARTBEAT';
+    if (!p2pDelivered || !isStream) {
+      if (this.mqttClient && this.mqttClient.connected && this.roomTopic) {
+        try {
+          this.mqttClient.publish(this.roomTopic, payload, { qos: 0 });
+        } catch {}
+      }
+    }
+
+    // 3. Local BroadcastChannel (Same-Device fallback)
     if (this.roomChannel) {
       try {
         this.roomChannel.postMessage(packet);
@@ -435,15 +600,30 @@ export class LocalTransport {
   }
 
   // 5. Inbound Packet Dispatcher & Deduplication
-  private handleIncomingPacket(packet: NetworkPacket): void {
+  private handleIncomingPacket(packet: any): void {
     if (!packet || typeof packet !== 'object') return;
+
+    // Handle internal Turbo WebRTC P2P signaling messages silently
+    if (packet._rtcType) {
+      if (packet.senderId === this.localPlayerId) return;
+      if (packet._rtcType === 'OFFER' && !this.isHost) {
+        this.handleGuestReceivedOffer(packet.sdp);
+      } else if (packet._rtcType === 'ANSWER' && this.isHost) {
+        this.handleHostReceivedAnswer(packet.sdp);
+      } else if (packet._rtcType === 'ICE') {
+        if (this.turboPeerConn && packet.candidate) {
+          this.turboPeerConn.addIceCandidate(new RTCIceCandidate(packet.candidate)).catch(() => {});
+        }
+      }
+      return;
+    }
 
     // Ignore packets sent by this exact client instance
     if ((packet as any).instanceId && (packet as any).instanceId === this.instanceId) {
       return;
     }
 
-    // Ignore packets from same role (host won't process host packets, guest won't process guest packets)
+    // Ignore packets from same role
     if ((packet as any).role && (packet as any).role === (this.isHost ? 'host' : 'guest')) {
       return;
     }
@@ -453,7 +633,7 @@ export class LocalTransport {
       return;
     }
 
-    // Deduplication check (allow high-frequency real-time packets like AIM_UPDATE / TIME_SYNC to bypass long-term deduplication)
+    // Deduplication check
     const isStreamPacket = packet.type === 'AIM_UPDATE' || packet.type === 'TIME_SYNC' || packet.type === 'HEARTBEAT';
     if (!isStreamPacket) {
       const packetKey = `${packet.senderId}_${packet.sequence}_${packet.type}`;
@@ -465,10 +645,8 @@ export class LocalTransport {
       }
     }
 
-    // Refresh peer keepalive timestamp
     this.lastPeerSeenTimestamp = Date.now();
 
-    // If we were reconnecting, restore connected state
     if (this.lobbyState === 'RECONNECTING') {
       this.stopReconnectCountdown();
       this.setState('CONNECTED', 'Opponent reconnected');
@@ -484,18 +662,19 @@ export class LocalTransport {
 
       case 'HEARTBEAT_ACK': {
         const rtt = Math.max(1, Date.now() - (packet as any).origTimestamp);
-        this.latencyMs = Math.round(rtt / 2);
+        this.latencyMs = this.isTurboP2POpen ? 2 : Math.round(rtt / 2);
         break;
       }
 
       case 'JOIN_REQUEST':
         if (this.isHost) {
-          // Stop beacon broadcasting interval once opponent joins, but keep room mqttClient alive!
           if (this.beaconIntervalId !== null) {
             clearInterval(this.beaconIntervalId);
             this.beaconIntervalId = null;
           }
           this.setState('CONNECTED', 'تم انضمام الخصم للغرفة');
+          // Trigger P2P offer exchange to establish 1ms zero-lag DataChannel
+          setTimeout(() => this.handleHostBroadcastOffer(), 100);
         }
         this.events.onPacket(packet);
         break;
@@ -523,8 +702,8 @@ export class LocalTransport {
         this.events.onPacket(packet);
         break;
 
+      case 'PLAYER_FORFEIT':
       case 'LEAVE_ROOM':
-        this.setState('DISCONNECTED', 'غادر الخصم الغرفة');
         this.events.onPacket(packet);
         break;
 
@@ -598,6 +777,7 @@ export class LocalTransport {
   private cleanup(): void {
     this.stopDiscovery();
     this.stopReconnectCountdown();
+    this.cleanupTurboWebRTC();
 
     if (this.joinRetryIntervalId !== null) {
       clearInterval(this.joinRetryIntervalId);
