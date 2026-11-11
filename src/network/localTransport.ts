@@ -116,15 +116,18 @@ export class LocalTransport {
     // Connect to global low-latency MQTT broker for match room
     try {
       this.mqttClient = mqtt.connect(PRIMARY_BROKER, {
-        keepalive: 30,
-        reconnectPeriod: 2000,
-        connectTimeout: 8000,
+        keepalive: 15,
+        reconnectPeriod: 1000,
+        connectTimeout: 5000,
+        clean: true,
+        queueQoSZero: false,
+        reschedulePings: true,
         clientId: `cm8_host_${cleanCode}_${Math.random().toString(16).slice(2, 8)}`,
       });
 
       this.mqttClient.on('connect', () => {
         if (!this.mqttClient) return;
-        this.mqttClient.subscribe(this.roomTopic, { qos: 1 }, (err) => {
+        this.mqttClient.subscribe(this.roomTopic, { qos: 0 }, (err) => {
           if (!err) {
             this.setState('ROOM_CREATED');
           }
@@ -325,15 +328,18 @@ export class LocalTransport {
 
     try {
       this.mqttClient = mqtt.connect(PRIMARY_BROKER, {
-        keepalive: 30,
-        reconnectPeriod: 2000,
-        connectTimeout: 8000,
+        keepalive: 15,
+        reconnectPeriod: 1000,
+        connectTimeout: 5000,
+        clean: true,
+        queueQoSZero: false,
+        reschedulePings: true,
         clientId: `cm8_client_${cleanCode}_${Math.random().toString(16).slice(2, 8)}`,
       });
 
       this.mqttClient.on('connect', () => {
         if (!this.mqttClient) return;
-        this.mqttClient.subscribe(this.roomTopic, { qos: 1 }, (err) => {
+        this.mqttClient.subscribe(this.roomTopic, { qos: 0 }, (err) => {
           if (!err) {
             // Send Join Request immediately upon subscription
             this.send(createJoinReq());
@@ -411,11 +417,10 @@ export class LocalTransport {
 
     const payload = JSON.stringify(packet);
 
-    // 1. Send via MQTT over WebSocket (Cross-Device across all networks)
+    // 1. Send via MQTT over WebSocket (Zero broker-ack latency, UDP-like game speed)
     if (this.mqttClient && this.mqttClient.connected && this.roomTopic) {
       try {
-        const isStream = packet.type === 'AIM_UPDATE' || packet.type === 'TIME_SYNC' || packet.type === 'HEARTBEAT';
-        this.mqttClient.publish(this.roomTopic, payload, { qos: isStream ? 0 : 1 });
+        this.mqttClient.publish(this.roomTopic, payload, { qos: 0 });
       } catch (e) {
         console.warn('MQTT publish error:', e);
       }

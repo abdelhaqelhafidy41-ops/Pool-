@@ -93,45 +93,28 @@ export const TableCanvas: React.FC<TableCanvasProps> = ({
   useEffect(() => {
     if (!lastPocketedPos || reducedMotion) return;
     const colors = ['#f59e0b', '#38bdf8', '#10b981', '#ffffff', '#fbbf24'];
-    const count = reducedMotion ? 4 : 16;
+    const count = reducedMotion ? 4 : 12;
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const speed = 1.5 + Math.random() * 4.5;
+      const speed = 1.5 + Math.random() * 3.5;
       particlesRef.current.push({
         x: lastPocketedPos.x,
         y: lastPocketedPos.y,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
-        size: 2 + Math.random() * 3.5,
+        size: 2 + Math.random() * 2.5,
         color: colors[Math.floor(Math.random() * colors.length)],
         alpha: 1,
         life: 0,
-        maxLife: 24 + Math.random() * 16,
+        maxLife: 20 + Math.random() * 12,
       });
     }
   }, [lastPocketedPos, reducedMotion]);
 
-  // Spawn victory celebration shower
+  // Clean particles on match reset or won
   useEffect(() => {
-    if (!isMatchWon || reducedMotion) return;
-    const colors = ['#fbbf24', '#38bdf8', '#34d399', '#f472b6', '#a78bfa'];
-    const timer = setInterval(() => {
-      for (let i = 0; i < 5; i++) {
-        particlesRef.current.push({
-          x: PLAY_AREA.left + Math.random() * PLAY_AREA.width,
-          y: PLAY_AREA.top - 10,
-          vx: (Math.random() - 0.5) * 2,
-          vy: 2 + Math.random() * 3,
-          size: 3 + Math.random() * 4,
-          color: colors[Math.floor(Math.random() * colors.length)],
-          alpha: 1,
-          life: 0,
-          maxLife: 60 + Math.random() * 40,
-        });
-      }
-    }, 150);
-    return () => clearInterval(timer);
-  }, [isMatchWon, reducedMotion]);
+    particlesRef.current = [];
+  }, [isMatchWon]);
 
   const cueBall = balls.find(b => b.number === 0);
 

@@ -15,6 +15,7 @@ interface GameOverModalProps {
   matchStake?: number;
   currentBalance?: number;
   isTournament?: boolean;
+  tournamentStage?: 'semifinal_won' | 'semifinal_lost' | 'final_won' | 'final_lost';
   onContinueTournament?: () => void;
   onPlayAgain: () => void;
   onQuitToTitle: () => void;
@@ -29,6 +30,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
   matchStake = 0,
   currentBalance,
   isTournament = false,
+  tournamentStage,
   onContinueTournament,
   onPlayAgain,
   onQuitToTitle,
@@ -36,6 +38,28 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
 }) => {
   const isRTL = language === 'ar';
   const isHumanWinner = winner && !winner.isAI;
+
+  // Tournament customized icon and title
+  let bannerIcon = isHumanWinner ? '🏆' : '🎱';
+  let titleText = isHumanWinner
+    ? isRTL ? 'مبروك الفوز!' : 'Victory!'
+    : isRTL ? 'انتهت المباراة' : 'Match Over';
+
+  if (isTournament) {
+    if (tournamentStage === 'final_won') {
+      bannerIcon = '👑';
+      titleText = isRTL ? 'بطل مسيرة البطولة! 🏆' : 'Grand Champion! 🏆';
+    } else if (tournamentStage === 'final_lost') {
+      bannerIcon = '🥈';
+      titleText = isRTL ? 'وصيف البطولة (المركز الثاني) 🥈' : 'Tournament Runner-Up 🥈';
+    } else if (tournamentStage === 'semifinal_won') {
+      bannerIcon = '🌟';
+      titleText = isRTL ? 'تأهلت إلى النهائي الكبير! 🏆' : 'Qualified for Grand Final! 🏆';
+    } else if (tournamentStage === 'semifinal_lost') {
+      bannerIcon = '🎱';
+      titleText = isRTL ? 'انتهت مسيرة البطولة في نصف النهائي' : 'Eliminated in Semifinals';
+    }
+  }
 
   return (
     <div
@@ -45,13 +69,11 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
       <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-md p-6 md:p-8 flex flex-col items-center gap-3.5 shadow-2xl text-center">
         {/* Victory Icon / Banner */}
         <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-amber-500 to-yellow-300 flex items-center justify-center text-3xl shadow-lg shadow-amber-500/20 animate-bounce">
-          {isHumanWinner ? '🏆' : '🎱'}
+          {bannerIcon}
         </div>
 
-        <h2 className="text-2xl font-black text-slate-100">
-          {isHumanWinner
-            ? isRTL ? 'مبروك الفوز!' : 'Victory!'
-            : isRTL ? 'انتهت المباراة' : 'Match Over'}
+        <h2 className="text-xl sm:text-2xl font-black text-slate-100">
+          {titleText}
         </h2>
 
         {winner && (
@@ -63,6 +85,37 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
         <p className="text-xs text-slate-400 max-w-xs leading-relaxed">
           {isRTL ? winReasonAr || 'انتهت المباراة بنجاح' : winReason || 'Match successfully concluded'}
         </p>
+
+        {/* Tournament Highlights Badge */}
+        {isTournament && (
+          <div className="w-full py-2 px-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-around text-xs">
+            {tournamentStage === 'final_won' && (
+              <>
+                <span className="font-bold text-amber-300 flex items-center gap-1">
+                  <span>🏆</span> {isRTL ? 'كأس البطولة' : 'Championship Trophy'}
+                </span>
+                <span className="font-mono font-black text-emerald-400">
+                  +1,500 🪙 {isRTL ? 'عملة' : 'Coins'}
+                </span>
+              </>
+            )}
+            {tournamentStage === 'final_lost' && (
+              <>
+                <span className="font-bold text-slate-300 flex items-center gap-1">
+                  <span>🥈</span> {isRTL ? 'المركز الثاني' : '2nd Place Prize'}
+                </span>
+                <span className="font-mono font-black text-amber-300">
+                  +500 🪙 {isRTL ? 'عملة' : 'Coins'}
+                </span>
+              </>
+            )}
+            {tournamentStage === 'semifinal_won' && (
+              <span className="font-bold text-sky-300 flex items-center gap-1">
+                <span>🎯</span> {isRTL ? 'حجزت مقعدك في النهائي الكبير!' : 'Seat reserved in Grand Final!'}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Rewards / Stake Settlement Cluster */}
         <div className="w-full flex flex-col gap-1.5 p-3 rounded-2xl bg-slate-950/80 border border-slate-800 my-1">
@@ -97,7 +150,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
             </>
           ) : (
             <div className="flex items-center justify-between text-xs text-slate-300 px-1">
-              <span>{coinsEarned >= 0 ? (isRTL ? 'مكافأة ودية:' : 'Friendly Reward:') : (isRTL ? 'نتيجة:' : 'Result:')}</span>
+              <span>{coinsEarned >= 0 ? (isRTL ? 'المكافأة المكتسبة:' : 'Reward Earned:') : (isRTL ? 'نتيجة:' : 'Result:')}</span>
               <span className={`font-mono font-bold tabular-nums ${coinsEarned >= 0 ? 'text-amber-300' : 'text-slate-400'}`}>
                 {coinsEarned >= 0 ? `+${coinsEarned}` : `${coinsEarned}`} 🪙
               </span>
@@ -118,7 +171,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
         </div>
 
         <div className="flex flex-col gap-2.5 w-full mt-2">
-          {/* Tournament Continuation Button */}
+          {/* Tournament Return / Continuation Button */}
           {isTournament && onContinueTournament && (
             <button
               onClick={() => {
@@ -128,7 +181,11 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
               className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-600 to-yellow-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg shadow-amber-500/30 transition-all active:scale-95 flex items-center justify-center gap-2"
             >
               <span>🏆</span>
-              <span>{isRTL ? 'متابعة مسيرة البطولة' : 'Continue Tournament Bracket'}</span>
+              <span>
+                {tournamentStage === 'semifinal_won'
+                  ? isRTL ? 'الرجوع لغرفة البطولة (المباراة النهائية)' : 'Return to Tournament Room (Final)'
+                  : isRTL ? 'الرجوع لغرفة البطولة' : 'Return to Tournament Room'}
+              </span>
             </button>
           )}
 

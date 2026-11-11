@@ -74,6 +74,86 @@ export class TournamentEngine {
   }
 
   /**
+   * Initializes a 4-Player City Amateur Cup (AI Tournament):
+   * Semifinal 1 (SF1): Human vs Tarek "The Falcon"
+   * Semifinal 2 (SF2): Layla Mirage vs Grandmaster Sultan
+   * Grand Final: Winner SF1 vs Winner SF2
+   */
+  public static createCityCup4P(humanPlayer: Player): TournamentMatch[] {
+    const b1 = TOURNAMENT_BOTS[0]; // Tarek
+    const b2 = TOURNAMENT_BOTS[3]; // Layla
+    const b3 = TOURNAMENT_BOTS[6]; // Grandmaster Sultan
+
+    const p2: Player = {
+      id: 'ai_city_1',
+      name: b1.name,
+      nameAr: b1.nameAr,
+      isAI: true,
+      aiDifficulty: 'easy',
+      group: 'undetermined',
+      score: 0,
+      avatarSeed: b1.avatarSeed,
+      cueId: 'cue_classic_wood',
+    };
+
+    const p3: Player = {
+      id: 'ai_city_2',
+      name: b2.name,
+      nameAr: b2.nameAr,
+      isAI: true,
+      aiDifficulty: 'medium',
+      group: 'undetermined',
+      score: 0,
+      avatarSeed: b2.avatarSeed,
+      cueId: 'cue_midnight_graphite',
+    };
+
+    const p4: Player = {
+      id: 'ai_city_3',
+      name: b3.name,
+      nameAr: b3.nameAr,
+      isAI: true,
+      aiDifficulty: 'master',
+      group: 'undetermined',
+      score: 0,
+      avatarSeed: b3.avatarSeed,
+      cueId: 'cue_emerald_dragon',
+    };
+
+    const sf1: TournamentMatch = {
+      id: 'city_4p_sf1',
+      round: 1,
+      player1: { ...humanPlayer },
+      player2: p2,
+      winner: null,
+      isCompleted: false,
+      score: '0 - 0',
+    };
+
+    const sf2: TournamentMatch = {
+      id: 'city_4p_sf2',
+      round: 1,
+      player1: p3,
+      player2: p4,
+      winner: null,
+      isCompleted: false,
+      score: '0 - 0',
+    };
+
+    const finalMatch: TournamentMatch = {
+      id: 'city_4p_final',
+      round: 2,
+      player1: { ...humanPlayer, name: 'TBD', nameAr: 'في انتظار الفائز' },
+      player2: { ...p4, name: 'TBD', nameAr: 'في انتظار الفائز' },
+      winner: null,
+      isCompleted: false,
+      score: '0 - 0',
+    };
+
+    return [sf1, sf2, finalMatch];
+  }
+
+  /**
    * Initializes a 2-Player Local Wi-Fi Championship (Head-to-head title series, Best of 3 or 5).
    */
   public static create2PlayerWifiChampionship(
@@ -102,28 +182,33 @@ export class TournamentEngine {
   public static create4PlayerWifiTournament(
     player1: Player,
     player2: Player,
-    contender3Name: string = 'اللاعب 3 (Local)',
-    contender4Name: string = 'اللاعب 4 (Local)'
+    contender3Name?: string,
+    contender4Name?: string
   ): TournamentMatch[] {
+    const c3 = TOURNAMENT_BOTS[3]; // Layla
+    const c4 = TOURNAMENT_BOTS[6]; // Sultan
+
     const p3: Player = {
       id: 'tourney_p3',
-      name: contender3Name,
-      nameAr: contender3Name,
-      isAI: false,
+      name: contender3Name || c3.name,
+      nameAr: contender3Name || c3.nameAr,
+      isAI: !contender3Name,
+      aiDifficulty: 'medium',
       group: 'undetermined',
       score: 0,
-      avatarSeed: 'p3_falcon',
+      avatarSeed: c3.avatarSeed,
       cueId: 'cue_midnight_graphite',
     };
 
     const p4: Player = {
       id: 'tourney_p4',
-      name: contender4Name,
-      nameAr: contender4Name,
-      isAI: false,
+      name: contender4Name || c4.name,
+      nameAr: contender4Name || c4.nameAr,
+      isAI: !contender4Name,
+      aiDifficulty: 'master',
       group: 'undetermined',
       score: 0,
-      avatarSeed: 'p4_sniper',
+      avatarSeed: c4.avatarSeed,
       cueId: 'cue_emerald_dragon',
     };
 
@@ -150,8 +235,8 @@ export class TournamentEngine {
     const finalMatch: TournamentMatch = {
       id: 'wifi_4p_final',
       round: 2,
-      player1: { ...player1, name: 'فائز SF1 (TBD)', nameAr: 'فائز نصف النهائي 1' },
-      player2: { ...player2, name: 'فائز SF2 (TBD)', nameAr: 'فائز نصف النهائي 2' },
+      player1: { ...player1, name: 'TBD', nameAr: 'في انتظار الفائز' },
+      player2: { ...p4, name: 'TBD', nameAr: 'في انتظار الفائز' },
       winner: null,
       isCompleted: false,
       score: '0 - 0',
@@ -162,9 +247,10 @@ export class TournamentEngine {
 
   /**
    * Simulates non-human matches in a round with skill authority ensuring escalating challenges.
+   * Seamlessly handles both 4-Player tournaments (3 matches) and 8-Player tournaments (7 matches).
    */
   public static simulateOtherMatches(matches: TournamentMatch[]): TournamentMatch[] {
-    const updated = [...matches];
+    const updated = matches.map(m => ({ ...m, player1: { ...m.player1 }, player2: { ...m.player2 } }));
 
     // Helper to pick winner based on difficulty rank
     const pickSkillWinner = (p1: Player, p2: Player): Player => {
@@ -173,44 +259,76 @@ export class TournamentEngine {
       const r2 = rank(p2.aiDifficulty);
       if (r1 > r2) return p1;
       if (r2 > r1) return p2;
-      return Math.random() > 0.5 ? p1 : p2;
+      return Math.random() > 0.4 ? p2 : p1; // slight edge to second contender
     };
 
-    // Round 1 simulation for non-human matches
-    for (let i = 1; i <= 3; i++) {
-      const match = updated[i];
-      if (!match.isCompleted) {
-        const winner = pickSkillWinner(match.player1, match.player2);
-        match.winner = winner;
-        match.isCompleted = true;
-        match.score = winner.id === match.player1.id ? '2 - 0' : '0 - 2';
+    // Case 1: 4-Player Tournament (3 matches total: SF1, SF2, Final)
+    if (updated.length === 3) {
+      const sf1 = updated[0];
+      const sf2 = updated[1];
+      const finalMatch = updated[2];
+
+      // Simulate SF2 if not completed and players are AI or when SF1 completes
+      if (!sf2.isCompleted && sf2.player1.name !== 'TBD' && sf2.player2.name !== 'TBD') {
+        const winner = pickSkillWinner(sf2.player1, sf2.player2);
+        sf2.winner = winner;
+        sf2.isCompleted = true;
+        sf2.score = '2 - 1';
       }
-    }
 
-    // Populate Semifinals if QF complete
-    if (updated[0].isCompleted && updated[1].isCompleted && updated[4].player1.name === 'TBD') {
-      updated[4].player1 = updated[0].winner!;
-      updated[4].player2 = updated[1].winner!;
-    }
-    if (updated[2].isCompleted && updated[3].isCompleted && updated[5].player1.name === 'TBD') {
-      updated[5].player1 = updated[2].winner!;
-      updated[5].player2 = updated[3].winner!;
-    }
-
-    // Simulate Semifinal match 2 if not involving human
-    if (updated[5].player1.name !== 'TBD' && updated[5].player2.name !== 'TBD' && !updated[5].isCompleted) {
-      if (updated[5].player1.isAI && updated[5].player2.isAI) {
-        const winner = pickSkillWinner(updated[5].player1, updated[5].player2);
-        updated[5].winner = winner;
-        updated[5].isCompleted = true;
-        updated[5].score = '2 - 1';
+      // Propagate SF1 winner to Final
+      if (sf1.isCompleted && sf1.winner) {
+        finalMatch.player1 = { ...sf1.winner };
       }
+
+      // Propagate SF2 winner to Final
+      if (sf2.isCompleted && sf2.winner) {
+        finalMatch.player2 = { ...sf2.winner };
+      }
+
+      return updated;
     }
 
-    // Populate Final if both SF complete
-    if (updated[4].isCompleted && updated[5].isCompleted && updated[6].player1.name === 'TBD') {
-      updated[6].player1 = updated[4].winner!;
-      updated[6].player2 = updated[5].winner!;
+    // Case 2: 8-Player Tournament (7 matches total: 4 QF, 2 SF, 1 Final)
+    if (updated.length >= 7) {
+      // Round 1 simulation for non-human matches (matches 1, 2, 3)
+      for (let i = 1; i <= 3; i++) {
+        const match = updated[i];
+        if (!match.isCompleted) {
+          const winner = pickSkillWinner(match.player1, match.player2);
+          match.winner = winner;
+          match.isCompleted = true;
+          match.score = winner.id === match.player1.id ? '2 - 0' : '0 - 2';
+        }
+      }
+
+      // Populate Semifinals if QF complete
+      if (updated[0].isCompleted && updated[1].isCompleted && (updated[4].player1.name === 'TBD' || !updated[4].player1.id)) {
+        updated[4].player1 = updated[0].winner!;
+        updated[4].player2 = updated[1].winner!;
+      }
+      if (updated[2].isCompleted && updated[3].isCompleted && (updated[5].player1.name === 'TBD' || !updated[5].player1.id)) {
+        updated[5].player1 = updated[2].winner!;
+        updated[5].player2 = updated[3].winner!;
+      }
+
+      // Simulate Semifinal match 2 if not involving human
+      if (updated[5].player1.name !== 'TBD' && updated[5].player2.name !== 'TBD' && !updated[5].isCompleted) {
+        if (updated[5].player1.isAI && updated[5].player2.isAI) {
+          const winner = pickSkillWinner(updated[5].player1, updated[5].player2);
+          updated[5].winner = winner;
+          updated[5].isCompleted = true;
+          updated[5].score = '2 - 1';
+        }
+      }
+
+      // Populate Final if both SF complete
+      if (updated[4].isCompleted && updated[5].isCompleted && (updated[6].player1.name === 'TBD' || !updated[6].player1.id)) {
+        updated[6].player1 = updated[4].winner!;
+        updated[6].player2 = updated[5].winner!;
+      }
+
+      return updated;
     }
 
     return updated;

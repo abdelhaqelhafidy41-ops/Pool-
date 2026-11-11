@@ -25,7 +25,7 @@ import { EightBallRuleEngine } from './rules/eightBallRules';
 import { NineBallRuleEngine } from './rules/nineBallRules';
 import { PracticeRuleEngine } from './rules/practiceRules';
 import { BilliardsAI } from './ai/billiardsAI';
-import { TournamentEngine } from './tournaments/tournamentEngine';
+import { TournamentEngine, TOURNAMENT_BOTS } from './tournaments/tournamentEngine';
 import { soundFX } from './audio/soundFX';
 import { LocalTransport } from './network/localTransport';
 import { DirectP2PTransport } from './network/directP2P';
@@ -170,6 +170,9 @@ export default function App() {
   // Tournament & Challenges
   const [tournamentMatches, setTournamentMatches] = useState<TournamentMatch[]>([]);
   const [_currentTournamentMatch, setCurrentTournamentMatch] = useState<TournamentMatch | null>(null);
+  const [lastTournamentStage, setLastTournamentStage] = useState<'semifinal_won' | 'semifinal_lost' | 'final_won' | 'final_lost' | undefined>(undefined);
+  const [isTournamentMatchActive, setIsTournamentMatchActive] = useState<boolean>(false);
+  const [lanRoomCode, setLanRoomCode] = useState<string>('');
   const [activeChallengeId, setActiveChallengeId] = useState<string | null>(null);
   const foulsInMatchRef = useRef<number>(0);
   const scratchesInMatchRef = useRef<number>(0);
@@ -707,10 +710,17 @@ export default function App() {
         }
       }
 
-      // Tournament bracket match only (strictly when matchStake is 0 and _currentTournamentMatch is active)
-      if (matchStake === 0 && _currentTournamentMatch) {
-        const isChampionship = _currentTournamentMatch.round === 3;
-        const currentMatchId = _currentTournamentMatch.id;
+      // Tournament bracket match only (when matchStake is 0 and a tournament match was being played)
+      if (matchStake === 0 && (_currentTournamentMatch || isTournamentMatchActive)) {
+        const activeMatch = _currentTournamentMatch || tournamentMatches.find(m => !m.isCompleted);
+        const currentMatchId = activeMatch?.id;
+        const isChampionship = activeMatch ? (
+          activeMatch.round === (tournamentMatches.length === 3 ? 2 : 3) || activeMatch.id.includes('final')
+        ) : false;
+        const isSemifinal = activeMatch ? (
+          activeMatch.round === 1 && (tournamentMatches.length === 3 || activeMatch.id.includes('sf'))
+        ) : false;
+
         const updatedTourney = tournamentMatches.map(m => {
           if (m.id === currentMatchId) {
             return {
@@ -722,19 +732,50 @@ export default function App() {
           }
           return m;
         });
+
+        // Simulates other matches (like SF2) and places the winner directly into the Grand Final slot
         const simulated = TournamentEngine.simulateOtherMatches(updatedTourney);
         setTournamentMatches(simulated);
         StorageManager.saveTournamentCareer(simulated);
 
-        if (isHumanWin && isChampionship) {
-          updated.trophies = (updated.trophies || 0) + 1;
-          updated.coins = (updated.coins || 0) + 500;
-          earned = 500;
-          setCoinsEarned(500);
-          setWinReason('Grand Tournament Champion! You won the Trophy and 500 Coins!');
-          setWinReasonAr('بطل مسيرة البطولات! فزت بكأس البطولة و500 عملة ذهبية!');
+        if (isChampionship) {
+          if (isHumanWin) {
+            // Champion: Gets Trophy 🏆 + 1,500 coins!
+            updated.trophies = (updated.trophies || 0) + 1;
+            updated.coins = (updated.coins || 0) + 1500;
+            earned = 1500;
+            setCoinsEarned(1500);
+            setWinReason('Tournament Champion! You won the Trophy and 1,500 Coins!');
+            setWinReasonAr('بطل مسيرة البطولة! فزت بكأس البطولة ومكافأة 1,500 عملة ذهبية! 🏆');
+            setLastTournamentStage('final_won');
+          } else {
+            // Runner-up (2nd Place): Gets 500 coins!
+            updated.coins = (updated.coins || 0) + 500;
+            earned = 500;
+            setCoinsEarned(500);
+            setWinReason('Tournament Runner-Up (2nd Place)! You won 500 Coins!');
+            setWinReasonAr('وصيف البطولة (المركز الثاني)! حصلت على مكافأة 500 عملة ذهبية! 🥈');
+            setLastTournamentStage('final_lost');
+          }
+        } else if (isSemifinal) {
+          if (isHumanWin) {
+            // Semifinal won: Advances to Grand Final!
+            updated.coins = (updated.coins || 0) + 100;
+            earned = 100;
+            setCoinsEarned(100);
+            setWinReason('Semifinal Winner! You advanced to the Grand Final!');
+            setWinReasonAr('مبروك الفوز في نصف النهائي! تأهلت رسمياً إلى المباراة النهائية 🏆');
+            setLastTournamentStage('semifinal_won');
+          } else {
+            earned = 20;
+            setCoinsEarned(20);
+            setWinReason('Eliminated in Semifinals');
+            setWinReasonAr('انتهت مسيرة البطولة في نصف النهائي. حظ أوفر في المرة القادمة!');
+            setLastTournamentStage('semifinal_lost');
+          }
         }
-        setCurrentTournamentMatch(null);
+
+        setIsTournamentMatchActive(true);
       }
 
       if (isLanMatch && isLanHost) {
@@ -976,8 +1017,14 @@ export default function App() {
 
   const handleStartTournamentMatch = (match: TournamentMatch) => {
     setCurrentTournamentMatch(match);
-    // Strictly escalating round difficulty: Round 1 = Easy, Round 2 = Hard, Round 3 = Grandmaster
-    const roundDifficulty: AIDifficulty = match.round === 1 ? 'easy' : match.round === 2 ? 'hard' : 'master';
+    setIsTournamentMatchActive(true);
+    setLastTournamentStage(undefined);
+
+    const is4P = tournamentMatches.length === 3;
+    const isFinal = is4P ? match.round === 2 : match.round === 3;
+    // Strictly escalating round difficulty: Final = master, SF = medium/hard, QF = easy
+    const roundDifficulty: AIDifficulty = isFinal ? 'master' : match.round === 1 ? 'easy' : 'hard';
+
     const opponent: Player = {
       ...match.player2,
       aiDifficulty: roundDifficulty,
@@ -987,6 +1034,64 @@ export default function App() {
     setPlayer2(opponent);
     startNewGame('8ball', true, roundDifficulty, opponent);
   };
+
+  // Auto-fill Wi-Fi tournament slots with AI bot contenders
+  const handleFillWifiSlotsWithAI = useCallback(() => {
+    soundFX.playButtonClick();
+    const bot2 = TOURNAMENT_BOTS[0]; // Tarek
+    const bot3 = TOURNAMENT_BOTS[3]; // Layla
+    const bot4 = TOURNAMENT_BOTS[6]; // Grandmaster Sultan
+
+    const p2: Player = {
+      id: 'ai_wifi_p2',
+      name: bot2.name,
+      nameAr: bot2.nameAr,
+      isAI: true,
+      aiDifficulty: 'easy',
+      group: 'undetermined',
+      score: 0,
+      avatarSeed: bot2.avatarSeed,
+      cueId: 'cue_classic_wood',
+    };
+
+    const p3: Player = {
+      id: 'ai_wifi_p3',
+      name: bot3.name,
+      nameAr: bot3.nameAr,
+      isAI: true,
+      aiDifficulty: 'medium',
+      group: 'undetermined',
+      score: 0,
+      avatarSeed: bot3.avatarSeed,
+      cueId: 'cue_midnight_graphite',
+    };
+
+    const p4: Player = {
+      id: 'ai_wifi_p4',
+      name: bot4.name,
+      nameAr: bot4.nameAr,
+      isAI: true,
+      aiDifficulty: 'master',
+      group: 'undetermined',
+      score: 0,
+      avatarSeed: bot4.avatarSeed,
+      cueId: 'cue_emerald_dragon',
+    };
+
+    setTournamentMatches(prev => {
+      if (prev.length === 3) {
+        return [
+          { ...prev[0], player2: prev[0].player2.name.includes('بانتظار') ? p2 : prev[0].player2 },
+          { ...prev[1], player1: p3, player2: p4 },
+          { ...prev[2] },
+        ];
+      }
+      return prev;
+    });
+
+    setStatusMessage('Remaining slots filled with AI bots! Start your semifinal when ready.');
+    setStatusMessageAr('تم ملء المقاعد المتبقية بنجاح! يمكنك الآن بدء مباراة نصف النهائي.');
+  }, [isRTL]);
 
   // Inbound LAN Packet Dispatcher (Host-Authoritative Sync)
   const handleInboundLanPacket = useCallback((packet: NetworkPacket, asHost: boolean) => {
@@ -1119,15 +1224,17 @@ export default function App() {
         setShotClock(packet.shotClock);
         setActivePlayerIndex(packet.activePlayerIndex);
       } else if (packet.type === 'SHOT_EXECUTED') {
-        setBalls(prevBalls => {
-          const cue = prevBalls.find(b => b.number === 0);
-          if (cue) {
-            cue.position = { ...packet.cueBallPosition };
-            physicsEngine.strikeBall(cue, packet.angle, packet.power, packet.spin);
-          }
-          return [...prevBalls];
-        });
-        setTurnPhase('SIMULATING');
+        if (turnPhase !== 'SIMULATING') {
+          setBalls(prevBalls => {
+            const cue = prevBalls.find(b => b.number === 0);
+            if (cue) {
+              cue.position = { ...packet.cueBallPosition };
+              physicsEngine.strikeBall(cue, packet.angle, packet.power, packet.spin);
+            }
+            return [...prevBalls];
+          });
+          setTurnPhase('SIMULATING');
+        }
       } else if (packet.type === 'BALL_PLACEMENT') {
         setBalls(prevBalls => {
           const cue = prevBalls.find(b => b.number === 0);
@@ -1248,12 +1355,19 @@ export default function App() {
     };
     setPlayer2(guestPlaceholder);
 
+    setLanRoomCode(config.roomCode);
+
     if (config.isTournament) {
       const tourneyMatches = config.tournamentType === '4p'
         ? TournamentEngine.create4PlayerWifiTournament(hostPlayer, guestPlaceholder)
         : TournamentEngine.create2PlayerWifiChampionship(hostPlayer, guestPlaceholder, config.rounds);
       setTournamentMatches(tourneyMatches);
       setCurrentTournamentMatch(tourneyMatches[0]);
+      setIsTournamentMatchActive(true);
+      setStatusMessage(`Tournament Room ${config.roomCode} opened. Waiting for players...`);
+      setStatusMessageAr(`تم فتح غرفة البطولة بالرمز ${config.roomCode}. بانتظار انضمام باقي اللاعبين...`);
+      setCurrentScreen('TOURNAMENT');
+      return;
     }
 
     setStatusMessage(`Room ${config.roomCode} opened. Waiting for opponent...`);
@@ -1265,6 +1379,7 @@ export default function App() {
   const handleJoinLanRoom = useCallback((roomCode: string) => {
     setIsLanMatch(true);
     setIsLanHost(false);
+    setLanRoomCode(roomCode);
     setLanFramesWon({ p1: 0, p2: 0 });
 
     // 1. Immediately initialize balls rack so the table is never blank even before packet arrives!
@@ -1681,19 +1796,23 @@ export default function App() {
           coinsEarned={coinsEarned}
           matchStake={matchStake}
           currentBalance={saveData.coins}
-          isTournament={Boolean(_currentTournamentMatch)}
+          isTournament={Boolean(isTournamentMatchActive || _currentTournamentMatch)}
+          tournamentStage={lastTournamentStage}
           onContinueTournament={() => {
             setCurrentScreen('TOURNAMENT');
             setCurrentTournamentMatch(null);
+            setIsTournamentMatchActive(false);
           }}
           onPlayAgain={() => {
             setCurrentTournamentMatch(null);
+            setIsTournamentMatchActive(false);
             const canAffordStake = matchStake > 0 && saveData.coins >= matchStake;
             const nextStake = canAffordStake ? matchStake : 0;
             startNewGame(gameMode, player2.isAI, player2.aiDifficulty, undefined, nextStake);
           }}
           onQuitToTitle={() => {
             setCurrentTournamentMatch(null);
+            setIsTournamentMatchActive(false);
             setMatchStake(0);
             setCurrentScreen('TITLE');
           }}
@@ -1729,6 +1848,9 @@ export default function App() {
           onOpenWifiTournament={() => setCurrentScreen('LAN_LOBBY')}
           onClose={() => setCurrentScreen('TITLE')}
           language={language}
+          wifiRoomCode={isLanMatch ? lanRoomCode : undefined}
+          isWifiHost={isLanHost}
+          onFillWifiSlotsWithAI={handleFillWifiSlotsWithAI}
         />
       )}
 
