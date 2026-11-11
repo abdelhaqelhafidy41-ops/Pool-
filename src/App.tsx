@@ -1027,6 +1027,23 @@ export default function App() {
             player1,
             player2: guestPlayer,
           } as any);
+
+          if (tournamentMatches && tournamentMatches.length > 0) {
+            const updatedTourney = tournamentMatches.map(m => {
+              if (m.player2.id === 'p2_guest' || m.player2.name.includes('بانتظار') || m.player2.name.includes('Waiting')) {
+                return { ...m, player2: guestPlayer };
+              }
+              return m;
+            });
+            setTournamentMatches(updatedTourney);
+            localTransportRef.current?.send({
+              type: 'TOURNAMENT_SYNC',
+              tournamentType: updatedTourney.length > 1 ? '4p' : '2p',
+              stage: updatedTourney.length > 1 ? 'semifinals' : 'final',
+              matches: updatedTourney,
+              activeMatchId: updatedTourney[0].id,
+            } as any);
+          }
         };
 
         sendStart();
@@ -1170,12 +1187,14 @@ export default function App() {
 
   inboundLanPacketRef.current = handleInboundLanPacket;
 
-  // Host a Local LAN Match
+  // Host a Local LAN Match / Tournament
   const handleStartLanHost = useCallback((config: {
     roomCode: string;
     mode: GameMode;
     ruleVariant: RuleVariant;
     rounds: MatchRounds;
+    isTournament?: boolean;
+    tournamentType?: '2p' | '4p';
   }) => {
     setIsLanMatch(true);
     setIsLanHost(true);
@@ -1187,7 +1206,7 @@ export default function App() {
     const hostPlayer: Player = {
       ...player1,
       id: 'p1_host',
-      name: saveData.playerName || (isRTL ? 'إيميلي' : 'Emely'),
+      name: saveData.playerName || (isRTL ? 'المضيف' : 'Host Player'),
       avatarSeed: saveData.avatarIcon || 'player1',
     };
     setPlayer1(hostPlayer);
@@ -1218,7 +1237,7 @@ export default function App() {
     });
 
     startNewGame(config.mode, false);
-    setPlayer2({
+    const guestPlaceholder: Player = {
       id: 'p2_guest',
       name: isRTL ? 'بانتظار الخصم...' : 'Waiting for opponent...',
       isAI: false,
@@ -1226,9 +1245,19 @@ export default function App() {
       score: 0,
       avatarSeed: 'lan_guest',
       cueId: 'cue_classic_wood',
-    });
+    };
+    setPlayer2(guestPlaceholder);
+
+    if (config.isTournament) {
+      const tourneyMatches = config.tournamentType === '4p'
+        ? TournamentEngine.create4PlayerWifiTournament(hostPlayer, guestPlaceholder)
+        : TournamentEngine.create2PlayerWifiChampionship(hostPlayer, guestPlaceholder, config.rounds);
+      setTournamentMatches(tourneyMatches);
+      setCurrentTournamentMatch(tourneyMatches[0]);
+    }
+
     setStatusMessage(`Room ${config.roomCode} opened. Waiting for opponent...`);
-    setStatusMessageAr(`تم فتح الغرفة ${config.roomCode}. بانتظار انضمام الخصم...`);
+    setStatusMessageAr(`تم فتح الغرفة بالرمز ${config.roomCode}. بانتظار الخصم...`);
     setCurrentScreen('PLAYING');
   }, [player1, saveData.playerName, saveData.avatarIcon, startNewGame, isRTL]);
 
@@ -1279,6 +1308,135 @@ export default function App() {
     setStatusMessageAr(`جاري الاتصال بالغرفة ${roomCode}...`);
     setCurrentScreen('PLAYING');
   }, [player1, saveData.playerName, saveData.avatarIcon, isRTL]);
+
+  // Start Direct Offline P2P Match (0 server, 0 internet, device-to-device)
+  const handleStartDirectP2PMatch = useCallback((
+    directP2P: DirectP2PTransport,
+    isHost: boolean,
+    config: {
+      roomCode: string;
+      mode: GameMode;
+      ruleVariant: RuleVariant;
+      rounds: MatchRounds;
+      isTournament?: boolean;
+      tournamentType?: '2p' | '4p';
+    }
+  ) => {
+    setIsLanMatch(true);
+    setIsLanHost(isHost);
+    setLanRounds(config.rounds);
+    setLanFramesWon({ p1: 0, p2: 0 });
+    setGameMode(config.mode);
+    setRuleVariant(config.ruleVariant);
+
+    const clientPlayer: Player = isHost
+      ? {
+          ...player1,
+          name: saveData.playerName || (isRTL ? 'المضيف' : 'Host Player'),
+        }
+      : {
+          id: 'p2_guest',
+          name: saveData.playerName || (isRTL ? 'اللاعب 2' : 'Guest Player'),
+          isAI: false,
+          group: 'undetermined',
+          score: 0,
+          avatarSeed: saveData.avatarIcon || 'player2',
+          cueId: 'cue_classic_wood',
+        };
+
+    const opponentPlayer: Player = isHost
+      ? {
+          id: 'p2_guest',
+          name: isRTL ? 'الخصم (Wi-Fi مباشر)' : 'Opponent (Direct Wi-Fi)',
+          isAI: false,
+          group: 'undetermined',
+          score: 0,
+          avatarSeed: 'player2',
+          cueId: 'cue_classic_wood',
+        }
+      : {
+          id: 'p1_host',
+          name: isRTL ? 'المضيف (Wi-Fi مباشر)' : 'Host (Direct Wi-Fi)',
+          isAI: false,
+          group: 'undetermined',
+          score: 0,
+          avatarSeed: 'player1',
+          cueId: 'cue_classic_wood',
+        };
+
+    if (isHost) {
+      setPlayer1(clientPlayer);
+      setPlayer2(opponentPlayer);
+      startNewGame(config.mode, false);
+    } else {
+      setPlayer1(opponentPlayer);
+      setPlayer2(clientPlayer);
+      const initBalls = config.mode === '9ball' ? rules9Ball.current.initializeBalls() : rules8Ball.current.initializeBalls();
+      setBalls(initBalls);
+      ballsRef.current = initBalls;
+      setActivePlayerIndex(0);
+      setTurnPhase('AIMING');
+      setShotClock(35);
+    }
+
+    const transport = new LocalTransport({
+      onStateChange: (state, detail) => {
+        if (state === 'DISCONNECTED') {
+          setStatusMessage(detail || 'Direct Wi-Fi channel closed');
+          setStatusMessageAr(detail || 'انقطع اتصال Wi-Fi المباشر');
+        }
+      },
+      onPacket: (packet) => {
+        inboundLanPacketRef.current?.(packet, isHost);
+      },
+      onDiscoveredRoomsUpdate: () => {},
+      onReconnectionCountdown: (sec) => {
+        setLanReconnectingSeconds(sec);
+      },
+    });
+
+    transport.attachDirectP2P(directP2P, config.roomCode, isHost, isHost ? 'p1_host' : 'p2_guest');
+    localTransportRef.current = transport;
+
+    if (config.isTournament) {
+      const tourneyMatches = config.tournamentType === '4p'
+        ? TournamentEngine.create4PlayerWifiTournament(clientPlayer, opponentPlayer)
+        : TournamentEngine.create2PlayerWifiChampionship(clientPlayer, opponentPlayer, config.rounds);
+      setTournamentMatches(tourneyMatches);
+      setCurrentTournamentMatch(tourneyMatches[0]);
+
+      if (isHost) {
+        transport.send({
+          type: 'TOURNAMENT_SYNC',
+          tournamentType: config.tournamentType || '2p',
+          stage: config.tournamentType === '4p' ? 'semifinals' : 'final',
+          matches: tourneyMatches,
+          activeMatchId: tourneyMatches[0].id,
+        } as any);
+      }
+    }
+
+    if (isHost) {
+      const ballsToSend = ballsRef.current && ballsRef.current.length > 0 ? ballsRef.current : rules8Ball.current.initializeBalls();
+      const sendStart = () => {
+        transport.send({
+          type: 'MATCH_START',
+          initialBalls: ballsToSend,
+          mode: config.mode,
+          ruleVariant: config.ruleVariant,
+          rounds: config.rounds,
+          player1: clientPlayer,
+          player2: opponentPlayer,
+        } as any);
+      };
+      sendStart();
+      setTimeout(sendStart, 300);
+    }
+
+    setStatusMessage(isHost ? 'Direct Wi-Fi match live! Your break shot.' : 'Direct Wi-Fi match live! Host break shot.');
+    setStatusMessageAr(isHost ? 'المباراة المباشرة بدأت أوفلاين! دورك في ضربة البداية.' : 'المباراة المباشرة بدأت أوفلاين! ضربة البداية للمضيف.');
+    setCurrentScreen('PLAYING');
+  }, [player1, saveData.playerName, saveData.avatarIcon, startNewGame, isRTL]);
 
   // Hot-Seat (Pass & Play on Same Device)
   const handleStartHotSeat = useCallback((mode: GameMode, variant: RuleVariant) => {
@@ -1568,12 +1726,13 @@ export default function App() {
             setSaveData(saved);
           }}
           onStartMatch={handleStartTournamentMatch}
+          onOpenWifiTournament={() => setCurrentScreen('LAN_LOBBY')}
           onClose={() => setCurrentScreen('TITLE')}
           language={language}
         />
       )}
 
-      {/* 7. Local Multiplayer Modal (Wi-Fi/LAN, Hot-Seat & Bluetooth Architecture) */}
+      {/* 7. Local Multiplayer & Tournament Modal (Short Room Code System) */}
       {currentScreen === 'LAN_LOBBY' && (
         <LocalMultiplayerModal
           player1={player1}

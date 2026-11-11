@@ -13,6 +13,7 @@ interface TournamentModalProps {
   player1: Player;
   onUpdateMatches: (matches: TournamentMatch[]) => void;
   onStartMatch: (match: TournamentMatch) => void;
+  onOpenWifiTournament?: () => void;
   onClose: () => void;
   language: Language;
 }
@@ -22,6 +23,7 @@ export const TournamentModal: React.FC<TournamentModalProps> = ({
   player1,
   onUpdateMatches,
   onStartMatch,
+  onOpenWifiTournament,
   onClose,
   language,
 }) => {
@@ -109,6 +111,19 @@ export const TournamentModal: React.FC<TournamentModalProps> = ({
             >
               👑 {isRTL ? 'كأس الأساتذة الكبرى' : 'Grand Masters Cup'}
             </button>
+
+            {onOpenWifiTournament && (
+              <button
+                onClick={() => {
+                  soundFX.playButtonClick();
+                  onOpenWifiTournament();
+                }}
+                className="px-3 py-1.5 rounded-xl font-bold transition-all bg-gradient-to-r from-emerald-600/40 to-teal-600/30 border border-emerald-500/70 hover:border-emerald-400 text-emerald-300 flex items-center gap-1.5 shadow"
+              >
+                <span>📡</span>
+                <span>{isRTL ? 'بطولة Wi-Fi أوفلاين (2 أو 4 لاعبين)' : 'Wi-Fi Tournament (2P/4P)'}</span>
+              </button>
+            )}
           </div>
 
           <div>
