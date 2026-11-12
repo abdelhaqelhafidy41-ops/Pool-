@@ -862,10 +862,12 @@ export default function App() {
   // Handle opponent forfeit / withdrawal / disconnection during an active match
   const handleOpponentForfeit = useCallback((opponentName?: string) => {
     // Local player is awarded the victory
-    const winner = player1;
+    const localPlayer = (isLanMatch && !isLanHost) ? player2 : player1;
+    const winner = localPlayer;
     setMatchWinner(winner);
-    const forfeitMsg = `Opponent (${opponentName || 'Player'}) forfeited. Victory awarded!`;
-    const forfeitMsgAr = `انسحب الخصم (${opponentName || 'اللاعب'}) من المباراة! تم احتساب الفوز لك والتأهل للمرحلة التالية 🏆`;
+    const resolvedOpponent = opponentName || ((isLanMatch && !isLanHost) ? player1.name : player2.name) || 'الخصم';
+    const forfeitMsg = `Opponent (${resolvedOpponent}) forfeited. Victory awarded!`;
+    const forfeitMsgAr = `انسحب الخصم (${resolvedOpponent}) من المباراة! تم احتساب الفوز لك والتأهل للمرحلة التالية 🏆`;
     setWinReason(forfeitMsg);
     setWinReasonAr(forfeitMsgAr);
     soundFX.playVictoryChime();
@@ -873,9 +875,9 @@ export default function App() {
     let updated = { ...saveData };
     let earned = 100;
 
-    // Settle tournament match if active
-    if (isTournamentMatchActive || _currentTournamentMatch) {
-      const activeMatch = _currentTournamentMatch || tournamentMatches.find(m => !m.isCompleted);
+    // Settle tournament match if active so the winner advances and continues the tournament to the end!
+    if (isTournamentMatchActive || _currentTournamentMatch || tournamentMatches.length > 0) {
+      const activeMatch = _currentTournamentMatch || tournamentMatches.find(m => !m.isCompleted) || tournamentMatches[0];
       const isChampionship = activeMatch ? (
         activeMatch.round === (tournamentMatches.length === 3 ? 2 : 3) || activeMatch.id.includes('final')
       ) : false;
@@ -914,7 +916,7 @@ export default function App() {
       updated = StorageManager.recordGameResult(true, {
         mode: gameMode,
         modeAr: gameMode === '9ball' ? 'كرة 9' : 'كرة 8',
-        opponent: player2.name,
+        opponent: resolvedOpponent,
         score: 'فوز بالانسحاب',
         fouls: 0,
         scratches: 0,
@@ -927,7 +929,7 @@ export default function App() {
     setSaveData(updated);
 
     setCurrentScreen('GAME_OVER');
-  }, [player1, player2, saveData, isTournamentMatchActive, _currentTournamentMatch, tournamentMatches, gameMode]);
+  }, [player1, player2, saveData, isTournamentMatchActive, _currentTournamentMatch, tournamentMatches, gameMode, isLanMatch, isLanHost]);
 
   // AI Turn Handling - Fast, Smooth, Reliable and Non-Blocking
   const aiTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -1208,49 +1210,78 @@ export default function App() {
         const currentBalls = ballsRef.current && ballsRef.current.length > 0 ? ballsRef.current : balls;
         const ballsToSend = currentBalls.length > 0 ? currentBalls : rules8Ball.current.initializeBalls();
 
-        // Host responds with JOIN_ACCEPT and authoritative MATCH_START
-        localTransportRef.current?.send({
-          type: 'JOIN_ACCEPT',
-          hostName: player1.name,
-          mode: gameMode,
-          ruleVariant,
-          rounds: lanRounds,
-        } as any);
+        const isTourney = Boolean(
+          isTournamentMatchActive ||
+          currentScreenRef.current === 'TOURNAMENT' ||
+          (lanRoomCode && lanRoomCode.startsWith('CUP')) ||
+          (tournamentMatches && tournamentMatches.length > 0)
+        );
 
-        const sendStart = () => {
+        if (isTourney && currentScreenRef.current === 'TOURNAMENT') {
+          // In a tournament room: update tournament bracket with guest's name
+          const updatedTourney = (tournamentMatches || []).map(m => {
+            if (m.player2.id === 'p2_guest' || m.player2.name.includes('بانتظار') || m.player2.name.includes('Waiting')) {
+              return { ...m, player2: guestPlayer };
+            }
+            return m;
+          });
+          setTournamentMatches(updatedTourney);
+          StorageManager.saveTournamentCareer(updatedTourney);
+
+          // Inform guest they are in the tournament room (DO NOT launch match yet!)
           localTransportRef.current?.send({
-            type: 'MATCH_START',
-            initialBalls: ballsToSend,
+            type: 'JOIN_ACCEPT',
+            hostName: player1.name,
             mode: gameMode,
             ruleVariant,
             rounds: lanRounds,
-            player1,
-            player2: guestPlayer,
+            isTournament: true,
+            matches: updatedTourney,
           } as any);
 
-          if (tournamentMatches && tournamentMatches.length > 0) {
-            const updatedTourney = tournamentMatches.map(m => {
-              if (m.player2.id === 'p2_guest' || m.player2.name.includes('بانتظار') || m.player2.name.includes('Waiting')) {
-                return { ...m, player2: guestPlayer };
-              }
-              return m;
-            });
-            setTournamentMatches(updatedTourney);
+          localTransportRef.current?.send({
+            type: 'TOURNAMENT_SYNC',
+            tournamentType: updatedTourney.length > 1 ? '4p' : '2p',
+            stage: updatedTourney.length > 1 ? 'semifinals' : 'final',
+            matches: updatedTourney,
+            activeMatchId: updatedTourney[0]?.id,
+          } as any);
+
+          setStatusMessage(`${packet.playerName} joined tournament room! Start the match when ready.`);
+          setStatusMessageAr(`انضم ${packet.playerName} إلى غرفة البطولة! اضغط بدء المباراة للبدء.`);
+        } else {
+          // Standard 1v1 match: Host responds with JOIN_ACCEPT and authoritative MATCH_START
+          localTransportRef.current?.send({
+            type: 'JOIN_ACCEPT',
+            hostName: player1.name,
+            mode: gameMode,
+            ruleVariant,
+            rounds: lanRounds,
+            isTournament: false,
+          } as any);
+
+          const sendStart = () => {
             localTransportRef.current?.send({
-              type: 'TOURNAMENT_SYNC',
-              tournamentType: updatedTourney.length > 1 ? '4p' : '2p',
-              stage: updatedTourney.length > 1 ? 'semifinals' : 'final',
-              matches: updatedTourney,
-              activeMatchId: updatedTourney[0].id,
+              type: 'MATCH_START',
+              initialBalls: ballsToSend,
+              mode: gameMode,
+              ruleVariant,
+              rounds: lanRounds,
+              player1,
+              player2: guestPlayer,
             } as any);
-          }
-        };
+          };
 
-        sendStart();
-        setTimeout(sendStart, 350);
+          sendStart();
+          setTimeout(sendStart, 300);
 
-        setStatusMessage(`${packet.playerName} joined! Your break shot.`);
-        setStatusMessageAr(`انضم ${packet.playerName}! دورك في ضربة البداية.`);
+          setStatusMessage(`${packet.playerName} joined! Your break shot.`);
+          setStatusMessageAr(`انضم ${packet.playerName}! دورك في ضربة البداية.`);
+        }
+      } else if (packet.type === 'PLAYER_FORFEIT' || packet.type === 'LEAVE_ROOM') {
+        if (currentScreenRef.current === 'PLAYING') {
+          handleOpponentForfeit((packet as any).playerName || player2.name);
+        }
       } else if (packet.type === 'AIM_UPDATE') {
         if (!isMyTurn) {
           setAimAngle(packet.angle);
@@ -1291,8 +1322,15 @@ export default function App() {
     } else {
       // CLIENT handlers
       if (packet.type === 'JOIN_ACCEPT') {
-        setStatusMessage('Joined room! Synchronizing table...');
-        setStatusMessageAr('تم الانضمام للغرفة! جاري مزامنة الطاولة...');
+        setStatusMessage('Joined room! Synchronizing...');
+        setStatusMessageAr('تم الانضمام للغرفة! جاري المزامنة...');
+        if ((packet as any).isTournament) {
+          setIsTournamentMatchActive(true);
+          if ((packet as any).matches && (packet as any).matches.length > 0) {
+            setTournamentMatches((packet as any).matches);
+          }
+          setCurrentScreen('TOURNAMENT');
+        }
       } else if (packet.type === 'MATCH_START') {
         if (packet.initialBalls && packet.initialBalls.length > 0) {
           setBalls(packet.initialBalls);
@@ -1306,9 +1344,18 @@ export default function App() {
         setActivePlayerIndex(0);
         setTurnPhase('AIMING');
         setShotClock(35);
+        if ((packet as any).isTournament) {
+          setIsTournamentMatchActive(true);
+        }
+        // Guest automatically enters the match when host starts it!
+        setCurrentScreen('PLAYING');
         setStatusMessage('Match started! Host has break shot.');
         setStatusMessageAr('بدأت المباراة! المضيف لديه ضربة البداية.');
         soundFX.playBallCollision(0.8);
+      } else if (packet.type === 'PLAYER_FORFEIT' || packet.type === 'LEAVE_ROOM') {
+        if (currentScreenRef.current === 'PLAYING') {
+          handleOpponentForfeit((packet as any).playerName || player1.name);
+        }
       } else if (packet.type === 'AIM_UPDATE') {
         if (!isMyTurn) {
           setAimAngle(packet.angle);
@@ -1379,13 +1426,17 @@ export default function App() {
         if (packet.matches && packet.matches.length > 0) {
           setTournamentMatches(packet.matches);
         }
+        setIsTournamentMatchActive(true);
+        if (currentScreenRef.current !== 'PLAYING') {
+          setCurrentScreen('TOURNAMENT');
+        }
         if (packet.champion) {
           setStatusMessage(`Tournament Champion: ${packet.champion.name}!`);
           setStatusMessageAr(`بطل بطولة Wi-Fi: ${packet.champion.name}!`);
         }
       }
     }
-  }, [balls, gameMode, ruleVariant, lanRounds, player1, player2, isMyTurn, activePlayerIndex, handlePlaceBallInHand]);
+  }, [balls, gameMode, ruleVariant, lanRounds, player1, player2, isMyTurn, activePlayerIndex, handlePlaceBallInHand, isTournamentMatchActive, lanRoomCode, tournamentMatches, handleOpponentForfeit]);
 
   inboundLanPacketRef.current = handleInboundLanPacket;
 
@@ -1418,6 +1469,9 @@ export default function App() {
         if (state === 'DISCONNECTED') {
           setStatusMessage(detail || 'Opponent disconnected');
           setStatusMessageAr(detail || 'انقطع اتصال الخصم');
+          if (currentScreenRef.current === 'PLAYING') {
+            handleOpponentForfeit(player2.name || 'الخصم');
+          }
         }
       },
       onPacket: (packet) => {
@@ -1436,6 +1490,7 @@ export default function App() {
       ruleVariant: config.ruleVariant,
       rounds: config.rounds,
       hostPlayer,
+      isTournament: config.isTournament,
     });
 
     startNewGame(config.mode, false);
@@ -1471,11 +1526,13 @@ export default function App() {
   }, [player1, saveData.playerName, saveData.avatarIcon, startNewGame, isRTL]);
 
   // Join a Local LAN Match
-  const handleJoinLanRoom = useCallback((roomCode: string) => {
+  const handleJoinLanRoom = useCallback((roomCode: string, isTournament?: boolean) => {
     setIsLanMatch(true);
     setIsLanHost(false);
     setLanRoomCode(roomCode);
     setLanFramesWon({ p1: 0, p2: 0 });
+
+    const isTourney = Boolean(isTournament || roomCode.toUpperCase().startsWith('CUP'));
 
     // 1. Immediately initialize balls rack so the table is never blank even before packet arrives!
     const initBalls = rules8Ball.current.initializeBalls();
@@ -1500,6 +1557,9 @@ export default function App() {
         if (state === 'DISCONNECTED') {
           setStatusMessage(detail || 'Disconnected from host');
           setStatusMessageAr(detail || 'انقطع الاتصال بالمضيف');
+          if (currentScreenRef.current === 'PLAYING') {
+            handleOpponentForfeit(player1.name || 'المضيف');
+          }
         }
       },
       onPacket: (packet) => {
@@ -1514,10 +1574,28 @@ export default function App() {
     localTransportRef.current = transport;
     transport.joinRoom(roomCode, clientPlayer);
 
-    setStatusMessage(`Connecting to room ${roomCode}...`);
-    setStatusMessageAr(`جاري الاتصال بالغرفة ${roomCode}...`);
-    setCurrentScreen('PLAYING');
-  }, [player1, saveData.playerName, saveData.avatarIcon, isRTL]);
+    if (isTourney) {
+      setIsTournamentMatchActive(true);
+      const placeholderHost: Player = {
+        id: 'p1_host',
+        name: isRTL ? 'صاحب الغرفة' : 'Room Host',
+        isAI: false,
+        group: 'undetermined',
+        score: 0,
+        avatarSeed: 'player1',
+        cueId: 'cue_classic_wood',
+      };
+      const guestMatches = TournamentEngine.create4PlayerWifiTournament(placeholderHost, clientPlayer);
+      setTournamentMatches(guestMatches);
+      setCurrentScreen('TOURNAMENT');
+      setStatusMessage(`Joined tournament ${roomCode}. Waiting for host to start match...`);
+      setStatusMessageAr(`تم الانضمام لبطولة ${roomCode}. بانتظار صاحب الغرفة لبدء المباراة...`);
+    } else {
+      setStatusMessage(`Connecting to room ${roomCode}...`);
+      setStatusMessageAr(`جاري الاتصال بالغرفة ${roomCode}...`);
+      setCurrentScreen('PLAYING');
+    }
+  }, [player1, saveData.playerName, saveData.avatarIcon, isRTL, handleOpponentForfeit]);
 
   // Start Direct Offline P2P Match (0 server, 0 internet, device-to-device)
   const handleStartDirectP2PMatch = useCallback((
@@ -1866,6 +1944,20 @@ export default function App() {
             startNewGame(gameMode, player2.isAI, player2.aiDifficulty, undefined, nextStake);
           }}
           onQuitToTitle={() => {
+            if (isLanMatch && currentScreenRef.current === 'PLAYING') {
+              const myId = isLanHost ? player1.id : player2.id;
+              const myName = saveData.playerName || (isLanHost ? player1.name : player2.name);
+              localTransportRef.current?.send({
+                type: 'PLAYER_FORFEIT',
+                playerId: myId,
+                playerName: myName,
+                reason: 'quit',
+                message: `${myName} forfeited the match.`,
+                messageAr: `انسحب ${myName} من المباراة.`
+              } as any);
+              localTransportRef.current?.disconnect();
+              setIsLanMatch(false);
+            }
             setMatchStake(0);
             setCurrentTournamentMatch(null);
             setCurrentScreen('TITLE');
